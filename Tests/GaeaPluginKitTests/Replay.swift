@@ -17,8 +17,9 @@ final class Replay: @unchecked Sendable {
     private(set) var session: [String] = []
 
     static let placeholderRoot = "/Users/me/"
-    /// Fields whose values differ on every run.
-    static let volatile: Set<String> = ["pid", "seconds", "date"]
+    /// Fields whose values differ on every run, or with every kit release (`kit`: the transcripts
+    /// are kit-agnostic).
+    static let volatile: Set<String> = ["pid", "seconds", "date", "kit"]
     /// Measurements a report carries when the syscall or MLX's device answered: dropped from both sides.
     static let measured: Set<String> = ["physFootprintBytes", "gpuActiveBytes", "gpuCacheBytes"]
 

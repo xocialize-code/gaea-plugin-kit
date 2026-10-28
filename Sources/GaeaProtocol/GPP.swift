@@ -7,6 +7,9 @@ public enum GPP {
     public static let version = 1
     /// The longest line either side may send, newline excluded.
     public static let maxLineBytes = 1 << 20
+    /// The one Developer ID team v1 trusts (G-22, AB-D-0184). A bundle signed by any other team is
+    /// refused, and so is a manifest naming one. A trust list the operator approves ships in G4.
+    public static let trustedTeam = "CFZS6RXUCP"
     /// The largest value `storage.put` accepts, encoded.
     public static let maxStorageValueBytes = 1 << 20
 

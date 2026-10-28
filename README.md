@@ -13,6 +13,9 @@ Requires macOS 26 and mlx-engine-swift 0.72.0 or later (contract 1.57.0).
 | `GaeaProtocol` | MLX-free: JSON values, the manifest's types, GPP's vocabulary. The Gaea host links no MLX and can share it |
 | `gaea-plugin-check` | A tiny MLX-free host. It verifies a built bundle, launches it under `Process.launchRequirement`, and drives a GPP session |
 
+v1 trusts one Developer ID team, CFZS6RXUCP (`GPP.trustedTeam`, G-22). The manifest generator refuses any other team,
+and `gaea-plugin-check` has no override. An operator-approved trust list ships in G4.
+
 ## A plugin
 
 ```swift

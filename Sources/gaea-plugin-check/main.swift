@@ -7,11 +7,11 @@ import Security
 
 // gaea-plugin-check — a tiny Gaea host for a built .gaeaplugin. MLX-free, like the real host.
 //
-//   gaea-plugin-check <bundle.gaeaplugin> [--team CFZS6RXUCP] [--operation <op>] [--params '<json>']
+//   gaea-plugin-check <bundle.gaeaplugin> [--operation <op>] [--params '<json>']
 //                     [--budget <bytes>] [--session <file.gpp>] [--no-run]
 //
 // 1. checks the bundle's signature statically: strict, nested code, every architecture, against a
-//    Developer ID requirement pinned to --team (Gaea's install-time gate, G-7);
+//    Developer ID requirement pinned to GPP.trustedTeam, the one team v1 trusts (G-7, G-22);
 // 2. launches the manifest's executable with Process.launchRequirement pinned to the same team, so the
 //    kernel enforces it at exec;
 // 3. checks hello against the manifest (plugin, models, engine, manifest_sha256);
@@ -40,7 +40,9 @@ func option(_ name: String) -> String? {
     args.removeSubrange(i...(i + 1))
     return value
 }
-let team = option("--team") ?? "CFZS6RXUCP"
+// v1 trusts one team and nothing overrides it (G-22, AB-D-0184).
+let team = GPP.trustedTeam
+if args.contains("--team") { fail("--team is gone: Gaea v1 trusts only \(team) (G-22)") }
 let operationArg = option("--operation")
 let paramsArg = option("--params") ?? "{}"
 let budget = UInt64(option("--budget") ?? "") ?? 8_000_000_000
@@ -48,7 +50,7 @@ let sessionPath = option("--session")
 let noRun = args.contains("--no-run")
 args.removeAll { $0 == "--no-run" }
 guard let bundlePath = args.first else {
-    fail("usage: gaea-plugin-check <bundle.gaeaplugin> [--team T] [--operation op] [--params json] [--budget bytes] [--session file]")
+    fail("usage: gaea-plugin-check <bundle.gaeaplugin> [--operation op] [--params json] [--budget bytes] [--session file]")
 }
 let bundle = URL(fileURLWithPath: bundlePath).standardizedFileURL
 

@@ -29,6 +29,12 @@ struct ManifestTests {
         #expect(GaeaPluginKitInfo.engineContract == "1.57.0")
     }
 
+    @Test func rejectsAnotherTeam() {
+        var definition = demoDefinition()
+        definition.team = "F84FKGN358"
+        #expect(throws: GPPError.self) { try definition.manifest() }
+    }
+
     @Test func rejectsAnEngineModelWithoutSurfaces() {
         var definition = demoDefinition()
         definition.models = [.engine(PackageRegistration(manifest: demoPackageManifest) { _ in fatalError() },

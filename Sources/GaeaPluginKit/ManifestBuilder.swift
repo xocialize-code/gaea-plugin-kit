@@ -5,7 +5,7 @@ import MLXToolKit
 /// The versions this kit build writes into hello and the manifest.
 public enum GaeaPluginKitInfo {
     /// This kit's version (`hello.kit.version`).
-    public static let version = "0.1.0"
+    public static let version = "0.1.1"
     /// The mlx-engine-swift release the kit is built and tested against. SwiftPM may resolve a later
     /// 0.x patch; the contract below is read from the linked MLXToolKit itself.
     public static let engineVersion = "0.72.0"
@@ -41,6 +41,9 @@ extension GaeaPluginDefinition {
     /// The rules a definition can break before the validator ever sees it.
     func check() throws {
         var problems: [String] = []
+        if team != GPP.trustedTeam {
+            problems.append("team \(team) is not \(GPP.trustedTeam), the only team Gaea v1 trusts (G-22)")
+        }
         for model in models {
             if model.lanes.filter(\.isDefault).count != 1 {
                 problems.append("model \(model.id) needs exactly one default lane")
