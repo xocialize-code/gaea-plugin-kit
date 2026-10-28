@@ -7,8 +7,10 @@ import MLXToolKit
 /// matte, mesh, video) is written there as a file and the JSON carries its path. Each file becomes a
 /// path output; every other top-level field becomes a value output.
 enum SpooledResponse {
+    /// `counts` carries the files already written per field across a job's calls, so a second
+    /// call's `image` is `image-1`, not a second `image-0`.
     static func outputs(_ envelope: CapabilityResponseEnvelope, outputDir: URL,
-                        names: [String: String]) throws -> [Output] {
+                        names: [String: String], counts: inout [String: Int]) throws -> [Output] {
         let spool = ArtifactSpool(directory: outputDir)
         let data = try CapabilityWire.encoder(spool: spool).encode(envelope)
         let root = try JSONDecoder().decode(JSONValue.self, from: data)
@@ -24,8 +26,10 @@ enum SpooledResponse {
                 outputs.append(.value(name, value))
                 continue
             }
-            for (index, file) in files.enumerated() {
+            for file in files {
                 // The spool names files by UUID; give them the field's name and their index.
+                let index = counts[key, default: 0]
+                counts[key] = index + 1
                 let source = URL(fileURLWithPath: file.path)
                 let target = outputDir.appending(path: "\(key)-\(index).\(source.pathExtension)")
                 if source != target {

@@ -132,8 +132,10 @@ public struct ModelDefinition: Sendable {
 /// mapping (size grid, steps, masks) and says what it actually used (GPP-1 §3.3).
 public struct EngineOperation: Sendable {
     public var operation: String
-    /// Build the canonical engine request from the job.
-    public var request: @Sendable (Job) throws -> EngineCall
+    /// Build the canonical engine requests from the job, run in order. Most jobs are one call; an MES
+    /// `count` above 1 on a capability that returns one result per call is one call per result
+    /// (`seed + i`, Image profile §2).
+    public var calls: @Sendable (Job) throws -> [EngineCall]
     /// Output names by the response field that carries them (`["image": "images"]`). A field not
     /// listed keeps its name, in snake_case.
     public var outputNames: [String: String]
@@ -142,7 +144,16 @@ public struct EngineOperation: Sendable {
                 request: @escaping @Sendable (Job) throws -> EngineCall) {
         self.operation = operation
         self.outputNames = outputNames
-        self.request = request
+        self.calls = { [try request($0)] }
+    }
+
+    /// An operation that makes several engine calls for one job. Their outputs are listed in call
+    /// order, their `effective` values merged (a later call's key wins), their warnings kept once each.
+    public init(_ operation: String, outputNames: [String: String] = [:],
+                calls: @escaping @Sendable (Job) throws -> [EngineCall]) {
+        self.operation = operation
+        self.outputNames = outputNames
+        self.calls = calls
     }
 }
 
@@ -242,6 +253,17 @@ public struct Job: Sendable {
 
     /// The first file of input `name`.
     public func input(_ name: String) -> URL? { inputs[name]?.first }
+
+    /// A text input (an MES `prompt` or `instruction`), which Gaea sends as a UTF-8 file (GPP-1 §3.3).
+    /// nil when the run has no such input.
+    public func text(_ name: String, index: Int = 0) throws -> String? {
+        guard let urls = inputs[name], index < urls.count else { return nil }
+        do {
+            return try String(contentsOf: urls[index], encoding: .utf8)
+        } catch {
+            throw GPPError(.invalidRequest, "Input \(name) isn't a readable UTF-8 file: \(urls[index].lastPathComponent).")
+        }
+    }
 
     /// Decode an input image through MLXToolKit's wire codec (the bytes are memory-mapped, not
     /// copied). The format comes from the file extension.

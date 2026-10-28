@@ -7,8 +7,15 @@ import Security
 
 // gaea-plugin-check — a tiny Gaea host for a built .gaeaplugin. MLX-free, like the real host.
 //
-//   gaea-plugin-check <bundle.gaeaplugin> [--operation <op>] [--params '<json>']
-//                     [--budget <bytes>] [--session <file.gpp>] [--no-run]
+//   gaea-plugin-check <bundle.gaeaplugin> [--operation <op>] [--model <id>] [--lane <id>]
+//                     [--params '<json>'] [--model-params '<json>'] [--seed N]
+//                     [--text <name>=<text>]… [--input <name>=<path>]…
+//                     [--models-root <dir>] [--budget <bytes>] [--timeout <s>] [--session <file.gpp>] [--no-run]
+//
+// --models-root points the worker at weights already on disk (MLXEngine's store, say), so a model
+// with real weights can be checked without a download; the default is an empty scratch folder.
+// --text writes a text input (an MES prompt) to a file, as Gaea does (GPP-1 §3.3); --input passes a
+// file. Both repeat for several values of one input.
 //
 // 1. checks the bundle's signature statically: strict, nested code, every architecture, against a
 //    Developer ID requirement pinned to GPP.trustedTeam, the one team v1 trusts (G-7, G-22);
@@ -44,7 +51,22 @@ func option(_ name: String) -> String? {
 let team = GPP.trustedTeam
 if args.contains("--team") { fail("--team is gone: Gaea v1 trusts only \(team) (G-22)") }
 let operationArg = option("--operation")
+let modelArg = option("--model")
+let laneArg = option("--lane")
 let paramsArg = option("--params") ?? "{}"
+let modelParamsArg = option("--model-params")
+let seedArg = option("--seed").flatMap(Int64.init)
+let modelsRootArg = option("--models-root")
+let runTimeout = TimeInterval(option("--timeout") ?? "") ?? 120
+var texts: [(String, String)] = [], files: [(String, String)] = []
+while let pair = option("--text") {
+    guard let eq = pair.firstIndex(of: "=") else { fail("--text is name=text") }
+    texts.append((String(pair[..<eq]), String(pair[pair.index(after: eq)...])))
+}
+while let pair = option("--input") {
+    guard let eq = pair.firstIndex(of: "=") else { fail("--input is name=path") }
+    files.append((String(pair[..<eq]), URL(fileURLWithPath: String(pair[pair.index(after: eq)...])).standardizedFileURL.path))
+}
 let budget = UInt64(option("--budget") ?? "") ?? 8_000_000_000
 let sessionPath = option("--session")
 let noRun = args.contains("--no-run")
@@ -96,7 +118,8 @@ do {
 
 let executable = bundle.appending(path: "Contents/MacOS/\(manifest.executable)")
 let scratch = FileManager.default.temporaryDirectory.appending(path: "gaea-plugin-check-\(UUID().uuidString)")
-let modelsRoot = scratch.appending(path: "models"), cacheRoot = scratch.appending(path: "cache")
+let modelsRoot = modelsRootArg.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? scratch.appending(path: "models")
+let cacheRoot = scratch.appending(path: "cache")
 try? FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
 try? FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
 
@@ -224,8 +247,8 @@ if !noRun {
     // pick the operation
     let target: (operation: String, model: String)
     if let operationArg {
-        guard let model = manifest.helpers?.first(where: { $0.operation == operationArg })?.model
-            ?? manifest.offers.first(where: { $0.operation == operationArg })?.modelID else {
+        guard let model = manifest.helpers?.first(where: { $0.operation == operationArg && (modelArg == nil || $0.model == modelArg) })?.model
+            ?? manifest.offers.first(where: { $0.operation == operationArg && (modelArg == nil || $0.modelID == modelArg) })?.modelID else {
             fail("the manifest neither offers nor helps with \(operationArg)")
         }
         target = (operationArg, model)
@@ -237,21 +260,47 @@ if !noRun {
         fail("nothing to run")
     }
     guard let model = manifest.models.first(where: { $0.id == target.model }),
-          let lane = model.lanes.first(where: \.default) else { fail("no default lane of \(target.model)") }
+          let lane = laneArg.map({ id in model.lanes.first { $0.id == id } }) ?? model.lanes.first(where: \.default) else {
+        fail("no lane \(laneArg ?? "(default)") of \(target.model)")
+    }
 
     // prepare
     send(["type": "prepare", "id": "h2", "model": .string(model.id), "lane": .string(lane.id)])
-    receive { $0["type"]?.stringValue == "memory" }
+    let prepared = receive(timeout: runTimeout) { $0["type"]?.stringValue == "memory" }
+    if let seconds = prepared.first(where: { $0["type"]?.stringValue == "prepared" })?["seconds"]?.doubleValue {
+        ok(String(format: "prepared %@ lane %@ in %.2f s", model.id, lane.id, seconds))
+    }
 
     // run
     guard let params = try? JSONDecoder().decode(JSONValue.self, from: Data(paramsArg.utf8)), params.objectValue != nil else {
         fail("--params is not a JSON object")
     }
     let outputDir = scratch.appending(path: "spool/job_check/out")
+    // Inputs as Gaea sends them: paths in the job's spool, a text input as a UTF-8 file.
+    var inputs: [String: [JSONValue]] = [:]
+    let inputDir = scratch.appending(path: "spool/job_check/in")
+    try? FileManager.default.createDirectory(at: inputDir, withIntermediateDirectories: true)
+    for (i, (name, text)) in texts.enumerated() {
+        let url = inputDir.appending(path: "\(name)-\(i).txt")
+        do { try Data(text.utf8).write(to: url) } catch { fail("couldn't write \(url.path)") }
+        inputs[name, default: []].append(.string(url.path))
+    }
+    for (name, path) in files { inputs[name, default: []].append(.string(path)) }
+    var run: [String: JSONValue] = [
+        "type": "run", "id": "h3", "job": "job_check", "operation": .string(target.operation), "model": .string(model.id),
+        "lane": .string(lane.id), "inputs": .object(inputs.mapValues { $0.count == 1 ? $0[0] : .array($0) }), "params": params,
+        "output_dir": .string(outputDir.path),
+    ]
+    if let modelParamsArg {
+        guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(modelParamsArg.utf8)), value.objectValue != nil else {
+            fail("--model-params is not a JSON object")
+        }
+        run["model_params"] = value
+    }
+    if let seedArg { run["seed"] = .int(seedArg) }
     let ran = Date()
-    send(["type": "run", "id": "h3", "job": "job_check", "operation": .string(target.operation), "model": .string(model.id),
-          "lane": .string(lane.id), "inputs": [:], "params": params, "output_dir": .string(outputDir.path)])
-    let runLines = receive { $0["type"]?.stringValue == "memory" }
+    send(run)
+    let runLines = receive(timeout: runTimeout) { $0["type"]?.stringValue == "memory" }
     guard let result = runLines.first(where: { $0["type"]?.stringValue == "result" }) else { fail("no result") }
     let progressCount = runLines.filter { $0["type"]?.stringValue == "progress" }.count
     ok(String(format: "%@ ran in %.2f s (wall %.2f s), %d progress lines; outputs %@", target.operation,

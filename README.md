@@ -23,12 +23,12 @@ import GaeaPluginKit
 
 let plugin = GaeaPluginDefinition(
     id: "com.xocialize.gaea.z-image", version: "0.1.0", team: "CFZS6RXUCP",
-    repo: "https://github.com/xocialize/gaea-plugin-z-image", title: "Z-Image", license: "MIT",
+    repo: "https://github.com/xocialize/gaea-plugin-z-image", title: "Z-Image", license: "Apache-2.0",
     executable: "gaea-z-image-worker",
     models: [.engine(ZImageTurboT2IPackage.self, id: "z-image-turbo", title: "Z-Image Turbo",
-                     lanes: [LaneDefinition(id: "int4", default: true, configuration: ZImageConfiguration(quant: .int4))],
+                     lanes: [LaneDefinition(id: "int4", default: true, configuration: ZImageConfiguration.turbo(quant: .int4))],
                      operations: [EngineOperation("image.generate", outputNames: ["image": "images"]) { job in
-                         EngineCall(T2IRequest(prompt: job.param("prompt")?.stringValue ?? "", seed: job.seed))
+                         EngineCall(T2IRequest(prompt: try job.text("prompt") ?? "", seed: job.seed))
                      }])],
     offers: [/* PluginManifest.Offer(...) */])
 
@@ -40,8 +40,20 @@ await GaeaPluginMain.run(plugin)
   `ResolvedLane` per lane, as `tools/manifest-gen` writes them. The plugin build runs `tools/validate.py --manifest`
   on it before signing.
 
+- A text input (an MES `prompt` or `instruction`) arrives as a UTF-8 file: `job.text("prompt")` reads it (GPP-1 §3.3).
+- One engine call per result: `EngineOperation(op, calls: { job in [EngineCall] })` runs them in order, for an MES
+  `count` on a capability that returns one image per call. Outputs are listed in call order (`image-0`, `image-1`, …),
+  `effective` values are merged, and each warning is kept once. Progress spans the whole job.
+- Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
+
 [gaea-plugin-demo](https://github.com/xocialize/gaea-plugin-demo) is the template: bundle layout, signing, checks,
-notarization and release CI.
+notarization and release CI. [gaea-plugin-z-image](https://github.com/xocialize/gaea-plugin-z-image) is the first
+plugin on an MLXEngine package.
+
+`gaea-plugin-check <bundle> [--operation op] [--model id] [--lane id] [--params json] [--model-params json] [--seed N]
+[--text name=text]… [--input name=path]… [--models-root dir] [--budget bytes] [--timeout s] [--session file]` checks a
+built bundle: its signature, a launch under the launch requirement, hello, and one run. `--models-root` points it at
+weights already on disk, and `--budget` must cover the lane.
 
 ## What the worker does
 

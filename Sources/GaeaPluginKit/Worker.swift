@@ -432,27 +432,40 @@ public actor GPPWorker {
                     retryable: true,
                     detail: ["repo": .string(missing.repo), "revision": .string(missing.revision ?? "main")]))
             }
-            let call: EngineCall
+            let calls: [EngineCall]
             do {
-                call = try operation.request(job)
+                calls = try operation.calls(job)
             } catch let error as GPPError {
                 throw Refused(error: error)
             } catch {
                 throw Refused(error: GPPError(.invalidRequest, "\(error)"))
             }
-            let response = try await RunProgress.$sink.withValue({ report in
-                let fraction = report.step.flatMap { step in
-                    report.totalSteps.flatMap { $0 > 0 ? Double(step) / Double($0) : nil }
+            guard !calls.isEmpty else { throw Refused(error: GPPError(.internal, "\(job.operation) built no engine call")) }
+            var outputs: [Output] = []
+            var effective: [String: JSONValue] = [:]
+            var warnings: [Warning] = []
+            var counts: [String: Int] = [:]
+            for (i, call) in calls.enumerated() {
+                try Task.checkCancellation()
+                // Progress spans every call: the fraction is the whole job's.
+                let response = try await RunProgress.$sink.withValue({ report in
+                    let within = report.step.flatMap { step in
+                        report.totalSteps.flatMap { $0 > 0 ? Double(step) / Double($0) : nil }
+                    }
+                    let fraction = within.map { (Double(i) + $0) / Double(calls.count) }
+                    context.progress(report.phase.rawValue, step: report.step, of: report.totalSteps, fraction: fraction,
+                                     message: calls.count > 1 ? "\(i + 1) of \(calls.count)" : nil)
+                }) {
+                    try await engine.run(call.request, package: packageID)
                 }
-                context.progress(report.phase.rawValue, step: report.step, of: report.totalSteps, fraction: fraction)
-            }) {
-                try await engine.run(call.request, package: packageID)
+                try Task.checkCancellation()
+                outputs += try SpooledResponse.outputs(
+                    CapabilityResponseEnvelope(capability: call.request.capability, response: response),
+                    outputDir: job.outputDir, names: operation.outputNames, counts: &counts)
+                effective.merge(call.effective) { _, later in later }
+                for warning in call.warnings where !warnings.contains(warning) { warnings.append(warning) }
             }
-            try Task.checkCancellation()
-            let outputs = try SpooledResponse.outputs(
-                CapabilityResponseEnvelope(capability: call.request.capability, response: response),
-                outputDir: job.outputDir, names: operation.outputNames)
-            return RunResult(outputs: outputs, effective: call.effective, warnings: call.warnings)
+            return RunResult(outputs: outputs, effective: effective, warnings: warnings)
         case .custom:
             try await prepare(model, lane, re: nil)
             guard let state = customs[model.id] else { throw GPPError(.internal, "\(model.id) did not prepare") }
