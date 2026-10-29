@@ -95,6 +95,9 @@ public struct ModelDefinition: Sendable {
     public var manifest: PackageManifest
     public var lanes: [LaneDefinition]
     public var backing: Backing
+    /// Adapters the plugin ships for this model (`shipping(_:)`): offered on every offer whose surface admits them,
+    /// and registered with the engine as the registry declares them when a run names one.
+    public var adapters: [ShippedAdapter] = []
 
     /// An MLXEngine package type, and the operations it serves.
     public static func engine<P: ModelPackage & SendableMetatype>(
@@ -115,6 +118,14 @@ public struct ModelDefinition: Sendable {
     public static func custom(id: String, title: String, manifest: PackageManifest, lanes: [LaneDefinition],
                               make: @escaping @Sendable () -> any PluginModel) -> ModelDefinition {
         ModelDefinition(id: id, title: title, manifest: manifest, lanes: lanes, backing: .custom(make))
+    }
+
+    /// This model, shipping `adapters` (from `AdapterRegistry.decode`). Only engine models take adapters, through
+    /// their package's `AdapterSupport`.
+    public func shipping(_ adapters: [ShippedAdapter]) -> ModelDefinition {
+        var model = self
+        model.adapters += adapters
+        return model
     }
 
     public func lane(_ id: String) -> LaneDefinition? { lanes.first { $0.id == id } }
@@ -302,7 +313,8 @@ public struct Job: Sendable {
     public var params: [String: JSONValue]
     /// The client's `x-` extension params, unchanged.
     public var modelParams: [String: JSONValue]
-    public var adapters: [JSONValue]
+    /// The adapters to apply (GPP-1 §3.3), in the client's order. `adapterRefs()` puts them on a request.
+    public var adapters: [JobAdapter]
     public var seed: UInt64?
     public var outputDir: URL
 
@@ -328,12 +340,18 @@ public struct Job: Sendable {
         guard let urls = inputs[name], index < urls.count else {
             throw GPPError(.invalidRequest, "The run has no input \(name)[\(index)].")
         }
-        let url = urls[index]
+        return try imageFile(urls[index], name: "Input \(name)")
+    }
+
+    func imageFile(_ url: URL, name: String) throws -> Image {
         let format: String
         switch url.pathExtension.lowercased() {
         case "png": format = "png"
         case "jpg", "jpeg": format = "jpeg"
-        default: throw GPPError(.invalidRequest, "Input \(name) is not a PNG or JPEG file: \(url.lastPathComponent).")
+        default: throw GPPError(.invalidRequest, "\(name) is not a PNG or JPEG file: \(url.lastPathComponent).")
+        }
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            throw GPPError(.invalidRequest, "\(name) isn't a readable file: \(url.path).")
         }
         let reference: JSONValue = ["format": .string(format), "file": .string(url.path)]
         return try CapabilityWire.decoder(spool: ArtifactSpool(directory: outputDir))

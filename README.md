@@ -5,7 +5,7 @@ GaeaPluginKit turns MLXEngine model packages into a Gaea plugin worker. The work
 The kit also writes the bundle's `manifest.json` from the plugin's own code, so the manifest can't drift from the
 worker.
 
-Requires macOS 26 and mlx-engine-swift 0.72.0 or later (contract 1.57.0).
+Requires macOS 26 and mlx-engine-swift 0.72.0 or later (contract 1.57.0). Adapters need Gaea 0.7.0 or later.
 
 | Product | What |
 |---|---|
@@ -50,24 +50,49 @@ await GaeaPluginMain.run(plugin)
   runs NERVE under the words the text guard protects in a Nacre job.
 - Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
 
+### Adapters (0.5.0)
+
+A model whose package declares `AdapterSupport` on a surface takes LoRA adapters there (GPP-1 §3.3, §4.3, §4.8):
+
+- **The manifest.** Each offer gets `adapter_support` from the package's own `AdapterSupport` (base model, formats,
+  kinds, max count, strength range), unless the offer sets one. A model can ship adapters from a registry in format 3
+  (the packages' `registry/*.json`): `.engine(…).shipping(try AdapterRegistry.decode(data).adapters)`. Each is listed
+  on every offer whose surface admits it, as a MES `AdapterOffer` in `model.adapters` (id `<namespace>:<id>`, title,
+  kind, ic slots, strength, licence, the clearance note) with its `adapters_meta` (trigger, prompt template, status,
+  clearance, format, pinned source). Compile the registry in with `resources: [.embedInCode(…)]`: the bundle carries
+  no SwiftPM resource bundle.
+- **A run.** `run.adapters` arrive typed as `job.adapters` (`JobAdapter`: id, strength, kind, format, source, and an
+  ic adapter's images by role). An operation puts `try job.adapterRefs()` on its `T2IRequest` or `IEditRequest`; it adds
+  no triggers, which Gaea has already applied. Before the engine call the worker registers each adapter with its
+  engine: a shipped one as its registry declares it, once Gaea's source matches the pin; an operator-registered one as
+  a plain adapter on the surface's base model, under the licence Gaea already gated (the engine's enforcement is
+  advisory). A missing file is fetched into `<models_root>/adapters/<sha256>/<file>` and reported as
+  `download_adapters` progress; the engine checks its sha256. An operation that leaves the adapters off its request
+  is refused rather than run without them.
+- **Refusals.** What the package's surface refuses (base model, kind, format, count, strength, conditioning) is
+  `invalid_request` with the engine's reason; a digest mismatch is `materialize_failed`; an ic adapter the plugin
+  doesn't ship is `invalid_request`, since GPP carries no slots or footprint.
+
 [gaea-plugin-demo](https://github.com/xocialize-code/gaea-plugin-demo) is the template: bundle layout, signing, checks,
 notarization and release CI. [gaea-plugin-z-image](https://github.com/xocialize-code/gaea-plugin-z-image) is the first
 plugin on an MLXEngine package.
 
 `gaea-plugin-check <bundle> [--operation op] [--model id] [--lane id] [--params json] [--model-params json] [--seed N]
-[--text name=text]… [--input name=path]… [--models-root dir] [--budget bytes] [--timeout s] [--session file]` checks a
-built bundle: its signature, a launch under the launch requirement, hello, and one run. `--models-root` points it at
-weights already on disk, and `--budget` must cover the lane.
+[--text name=text]… [--input name=path]… [--adapter id=strength]… [--adapter-input id:role=path]… [--models-root dir]
+[--budget bytes] [--timeout s] [--session file]` checks a built bundle: its signature, a launch under the launch
+requirement, hello, and one run. `--models-root` points it at weights already on disk, and `--budget` must cover the
+lane. `--adapter` sends an adapter the offer ships as Gaea would, with the kind, format and source from its
+`adapters_meta`; `--adapter-input` gives an ic adapter an image for a slot.
 
 ## What the worker does
 
 | GPP | The kit |
 |---|---|
 | `hello` | Plugin, models and engine from the definition. `manifest_sha256` is the digest of the bundle's `manifest.json` |
-| `configure` | Builds `MLXServeEngine(workerBudget:)` and points its model store at `models_root`. Settings get their manifest defaults filled in. The plugin's `onConfigure` hook then runs in a task of its own |
+| `configure` | Builds `MLXServeEngine(workerBudget:)` and points its model store at `models_root` (adapters land under `adapters/`, fetched on demand). Settings get their manifest defaults filled in. The plugin's `onConfigure` hook then runs in a task of its own |
 | `materialize` | `engine.materialize(package:)`, with `materialize.progress` from the download sink. Byte counts come from `materializationPreview`. A lane the package materializes itself is answered `invalid_request`: send `prepare` |
 | `prepare` | Registers the lane under the model's id, replacing another lane of the same model. Then `engine.prepare`; a download on the way is relayed from `PreparationMonitor.events()`. A custom model's lane is charged as an external tenant |
-| `run` | The plugin's `EngineOperation` builds the canonical request, and `engine.run` executes it. A `RunProgress` sink feeds `progress`. The response is encoded with `CapabilityWire.encoder(spool:)` into `output_dir`: artifacts become files named after their field, other fields become values. Missing weights are `not_materialized`. A second run gets `busy` |
+| `run` | The run's adapters are registered with the engine and fetched (Adapters, above). The plugin's `EngineOperation` builds the canonical request, and `engine.run` executes it. A `RunProgress` sink feeds `progress`. The response is encoded with `CapabilityWire.encoder(spool:)` into `output_dir`: artifacts become files named after their field, other fields become values. Missing weights are `not_materialized`. A second run gets `busy` |
 | `cancel` | Cancels the run's task. The run ends with `cancelled` ("Cancelled at step k of n.") |
 | `unload` | `engine.evict(package:)`, or the custom model's `unload()` and the withdrawal of its tenant |
 | `memory` | `engine.workerMemoryReport()`, unchanged: on `memory.query`, and unprompted after `prepared`, `unloaded` and a run's end |
@@ -92,7 +117,10 @@ The tests need a checkout of xocialize-code/gaea, at `../gaea-mes-media-server` 
   and each `W` line is compared field by field. Only pid, timings, measured memory and computed values are masked;
 - run each session the worker produced through `validate.py --transcript`;
 - cover the paths the examples don't walk: before configure, unknown fields, unknown lanes, unoffered operations,
-  `busy`, and `shutdown` during a run.
+  `busy`, and `shutdown` during a run;
+- cover adapters over a fake package that declares `AdapterSupport`: the registry decoder, the manifest's
+  `adapter_support`, `model.adapters` and `adapters_meta` (validated), shipped and operator adapters fetched by digest
+  and applied, an ic adapter's images in slot order, and every refusal.
 
 ## Licence
 

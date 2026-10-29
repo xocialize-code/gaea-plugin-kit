@@ -10,12 +10,15 @@ import Security
 //   gaea-plugin-check <bundle.gaeaplugin> [--operation <op>] [--model <id>] [--lane <id>]
 //                     [--params '<json>'] [--model-params '<json>'] [--seed N]
 //                     [--text <name>=<text>]… [--input <name>=<path>]…
+//                     [--adapter <id>=<strength>]… [--adapter-input <id>:<role>=<path>]…
 //                     [--models-root <dir>] [--budget <bytes>] [--timeout <s>] [--session <file.gpp>] [--no-run]
 //
 // --models-root points the worker at weights already on disk (MLXEngine's store, say), so a model
 // with real weights can be checked without a download; the default is an empty scratch folder.
 // --text writes a text input (an MES prompt) to a file, as Gaea does (GPP-1 §3.3); --input passes a
-// file. Both repeat for several values of one input.
+// file. Both repeat for several values of one input. --adapter sends an adapter the offer ships the way Gaea does
+// (GPP-1 §3.3): the id and strength, with the kind, format and pinned source from the offer's adapters_meta, and an ic
+// adapter's images (--adapter-input) as its inputs by role.
 //
 // 1. checks the bundle's signature statically: strict, nested code, every architecture, against a
 //    Developer ID requirement pinned to GPP.trustedTeam, the one team v1 trusts (G-7, G-22);
@@ -66,6 +69,20 @@ while let pair = option("--text") {
 while let pair = option("--input") {
     guard let eq = pair.firstIndex(of: "=") else { fail("--input is name=path") }
     files.append((String(pair[..<eq]), URL(fileURLWithPath: String(pair[pair.index(after: eq)...])).standardizedFileURL.path))
+}
+var adapterArgs: [(id: String, strength: Double)] = []
+while let pair = option("--adapter") {
+    guard let eq = pair.lastIndex(of: "="), let strength = Double(pair[pair.index(after: eq)...]) else {
+        fail("--adapter is id=strength")
+    }
+    adapterArgs.append((String(pair[..<eq]), strength))
+}
+var adapterInputs: [String: [String: String]] = [:]
+while let pair = option("--adapter-input") {
+    guard let eq = pair.firstIndex(of: "="), let colon = pair[..<eq].lastIndex(of: ":") else {
+        fail("--adapter-input is id:role=path")
+    }
+    adapterInputs[String(pair[..<colon]), default: [:]][String(pair[pair.index(after: colon)..<eq])] = String(pair[pair.index(after: eq)...])
 }
 let budget = UInt64(option("--budget") ?? "") ?? 8_000_000_000
 let sessionPath = option("--session")
@@ -298,6 +315,24 @@ if !noRun {
         run["model_params"] = value
     }
     if let seedArg { run["seed"] = .int(seedArg) }
+    if !adapterArgs.isEmpty {
+        guard let offer = manifest.offers.first(where: { $0.operation == target.operation && $0.modelID == model.id }) else {
+            fail("--adapter: no offer of \(target.operation) on \(model.id)")
+        }
+        let listed = offer.model["adapters"]?.arrayValue ?? []
+        let metas = offer.adapterMetas
+        run["adapters"] = .array(adapterArgs.map { arg in
+            guard let meta = metas[arg.id], let entry = listed.first(where: { $0["id"]?.stringValue == arg.id }) else {
+                fail("--adapter: \(target.operation) on \(model.id) ships no adapter \(arg.id)")
+            }
+            var item: [String: JSONValue] = [
+                "id": .string(arg.id), "strength": .double(arg.strength), "kind": entry["kind"] ?? "plain",
+                "format": .string(meta.format), "source": (try? JSONValue(encoding: meta.source)) ?? .null,
+            ]
+            if let roles = adapterInputs[arg.id] { item["inputs"] = .object(roles.mapValues { .string($0) }) }
+            return .object(item)
+        })
+    }
     let ran = Date()
     send(run)
     let runLines = receive(timeout: runTimeout) { $0["type"]?.stringValue == "memory" }

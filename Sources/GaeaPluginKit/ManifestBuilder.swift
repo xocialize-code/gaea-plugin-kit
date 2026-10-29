@@ -5,7 +5,7 @@ import MLXToolKit
 /// The versions this kit build writes into hello and the manifest.
 public enum GaeaPluginKitInfo {
     /// This kit's version (`hello.kit.version`).
-    public static let version = "0.3.1"
+    public static let version = "0.5.0"
     /// The mlx-engine-swift release the kit is built and tested against. SwiftPM may resolve a later
     /// 0.x patch; the contract below is read from the linked MLXToolKit itself.
     public static let engineVersion = "0.72.0"
@@ -35,7 +35,8 @@ extension GaeaPluginDefinition {
                                                              resolved: model.resolved($0))
                                      })
             },
-            offers: offers, helpers: helpers, settings: settings, storage: storage)
+            offers: offers.map { offer in model(offer.modelID ?? "").map(offer.withAdapters(of:)) ?? offer },
+            helpers: helpers, settings: settings, storage: storage)
     }
 
     /// The rules a definition can break before the validator ever sees it.
@@ -55,7 +56,19 @@ extension GaeaPluginDefinition {
                 for op in operations.keys where !serves(op, model: model.id) {
                     problems.append("model \(model.id) maps \(op), which no offer or helper names")
                 }
+            } else if !model.adapters.isEmpty {
+                problems.append("model \(model.id) ships adapters but is not an engine model")
             }
+            for adapter in model.adapters {
+                let offered = offers.contains { offer in
+                    offer.modelID == model.id && adapterCapability(offer.operation).flatMap { capability in
+                        model.adapterSupport(capability).map { $0.mismatch(adapter.descriptor, capability: capability) == nil }
+                    } == true
+                }
+                if !offered { problems.append("model \(model.id) ships adapter \(adapter.id), which none of its offers admits") }
+            }
+            let ids = model.adapters.map(\.id)
+            if Set(ids).count != ids.count { problems.append("model \(model.id) ships an adapter id twice") }
         }
         for offer in offers where model(offer.modelID ?? "") == nil {
             problems.append("offer \(offer.operation) names model \(offer.modelID ?? "?"), which isn't declared")

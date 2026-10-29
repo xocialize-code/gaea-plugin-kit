@@ -49,7 +49,9 @@ public actor GPPWorker {
     ///   - manifest: the bytes of the bundle's manifest.json; `hello.manifest_sha256` is their digest.
     ///   - onExit: called once, after `shutdown` or the end of stdin, with the exit status.
     public init(definition: GaeaPluginDefinition, manifest: Data, connection: GPPConnection,
-                engineFactory: @escaping EngineFactory = { MLXServeEngine(workerBudget: $0) },
+                // Advisory licence enforcement: Gaea has already gated each model and adapter (opt-in for NOASSERTION,
+                // research and gated licences), so the engine records an advisory where its policy would object.
+                engineFactory: @escaping EngineFactory = { MLXServeEngine(workerBudget: $0, licenseEnforcement: .advisory) },
                 onExit: @escaping @Sendable (Int32) -> Void) {
         self.definition = definition
         self.connection = connection
@@ -175,7 +177,9 @@ public actor GPPWorker {
         let initial = engine == nil
         if initial {
             let engine = makeEngine(budget)
+            // Adapters land in <models_root>/adapters/<sha256>/<file>, fetched by the run that first names them.
             await engine.useModelStore(ModelStore(root: URL(fileURLWithPath: modelsRoot, isDirectory: true)))
+            await engine.setAdapterFetchPolicy(.onDemand)
             self.engine = engine
         }
         let ctx = WorkerContext(settings: definition.settings(merging: settings),
@@ -446,6 +450,11 @@ public actor GPPWorker {
                     retryable: true,
                     detail: ["repo": .string(missing.repo), "revision": .string(missing.revision ?? "main")]))
             }
+            do {
+                try await registerAdapters(job, model: model, context: context)
+            } catch let error as GPPError {
+                throw Refused(error: error)
+            }
             if let perform = operation.perform {
                 let relay: @Sendable (PackageID, any WireRequest) async throws -> any CapabilityResponse = { package, request in
                     try Task.checkCancellation()
@@ -479,6 +488,12 @@ public actor GPPWorker {
                 throw Refused(error: GPPError(.invalidRequest, "\(error)"))
             }
             guard !calls.isEmpty else { throw Refused(error: GPPError(.internal, "\(job.operation) built no engine call")) }
+            // An operation that leaves the run's adapters off its request would run without them, silently.
+            let asked = job.adapters.map(\.id)
+            if !asked.isEmpty, let dropped = calls.first(where: { (($0.request as? any AdapterCarrying)?.adapters.map(\.id) ?? []) != asked }) {
+                throw Refused(error: GPPError(.internal, "\(model.id) built a \(dropped.request.capability.rawValue) request without "
+                    + "the run's adapters (\(asked.joined(separator: ", "))); its operation should pass job.adapterRefs()."))
+            }
             var outputs: [Output] = []
             var effective: [String: JSONValue] = [:]
             var warnings: [Warning] = []
@@ -505,10 +520,78 @@ public actor GPPWorker {
             }
             return RunResult(outputs: outputs, effective: effective, warnings: warnings)
         case .custom:
+            if !job.adapters.isEmpty {
+                throw Refused(error: GPPError(.invalidRequest, "\(model.id) is not an engine model, so it takes no adapters."))
+            }
             try await prepare(model, lane, re: nil)
             guard let state = customs[model.id] else { throw GPPError(.internal, "\(model.id) did not prepare") }
             return try await state.instance.run(job, context: context)
         }
+    }
+
+    /// Put the run's adapters in the engine's catalog and fetch any not yet on disk, reporting the download as the run's
+    /// progress. The engine checks each file's sha256, and refuses an adapter its package's surface doesn't take
+    /// (base model, kind, format, count, strength) before admission.
+    private func registerAdapters(_ job: Job, model: ModelDefinition, context: RunContext) async throws {
+        guard !job.adapters.isEmpty else { return }
+        guard let engine else { throw GPPError(.internal, "not configured") }
+        guard let capability = adapterCapability(job.operation), let support = model.adapterSupport(capability) else {
+            throw GPPError(.invalidRequest, "\(model.id) takes no adapters for \(job.operation): its package declares no adapter support there.")
+        }
+        var missing: [String] = []
+        for adapter in job.adapters {
+            let descriptor = try Self.descriptor(adapter, capability: capability, support: support,
+                                                 shipped: model.adapters.first { $0.id == adapter.id })
+            do {
+                try await engine.registerAdapter(descriptor)
+            } catch {
+                throw Self.translate(error)
+            }
+            if await engine.adapterNeedsDownload(id: adapter.id) { missing.append(adapter.id) }
+        }
+        guard !missing.isEmpty else { return }
+        let message = "Fetching " + missing.joined(separator: ", ")
+        context.progress("download_adapters", fraction: 0, message: message)
+        do {
+            try await WeightDownloadProgress.$sink.withValue({ fraction, _ in
+                context.progress("download_adapters", fraction: min(1, max(0, fraction)), message: message)
+            }) {
+                try await engine.prepareAdapters(missing)
+            }
+        } catch {
+            throw Self.translate(error, materializing: true)
+        }
+    }
+
+    /// The engine descriptor for a run's adapter. One the plugin ships is registered as its registry declares it
+    /// (licence, strength range, an `ic` adapter's ordered slots and footprint), once Gaea's source matches the pin.
+    /// One the operator registered is plain, on this surface's base model, under the licence Gaea already gated.
+    static func descriptor(_ adapter: JobAdapter, capability: Capability, support: AdapterSupport,
+                           shipped: ShippedAdapter?) throws -> AdapterDescriptor {
+        let sent = adapter.source
+        if let shipped {
+            let pinned = shipped.descriptor
+            guard pinned.source.repo == sent.repo, pinned.source.revision == sent.revision.lowercased(),
+                  pinned.source.file == sent.file, pinned.source.sha256 == sent.sha256.lowercased() else {
+                throw GPPError(.invalidRequest, "Adapter \(adapter.id) ships with this plugin pinned to \(pinned.source.repo)@"
+                    + "\(pinned.source.revision.prefix(12)) \(pinned.source.file); the run names "
+                    + "\(sent.repo)@\(sent.revision.prefix(12)) \(sent.file).")
+            }
+            guard pinned.kind == adapter.kind, pinned.format == adapter.format else {
+                throw GPPError(.invalidRequest, "Adapter \(adapter.id) is a \(pinned.kind) \(pinned.format) adapter; the run says "
+                    + "\(adapter.kind) \(adapter.format).")
+            }
+            return pinned
+        }
+        guard adapter.kind == .plain else {
+            throw GPPError(.invalidRequest, "Adapter \(adapter.id) is ic and doesn't ship with this plugin: an ic adapter's "
+                + "conditioning slots and footprint come from the plugin's own registry.")
+        }
+        return AdapterDescriptor(
+            id: adapter.id, kind: .plain, format: adapter.format, baseModels: [support.baseModel], capabilities: [capability],
+            source: MLXToolKit.AdapterSource(repo: sent.repo, revision: sent.revision.lowercased(), file: sent.file,
+                                             sha256: sent.sha256, bytes: sent.bytes.map { UInt64(clamping: $0) }),
+            license: SPDXLicense("NOASSERTION"))
     }
 
     private func finish(_ job: Job, outcome: Result<RunResult, any Error>, context: RunContext,
@@ -609,6 +692,13 @@ public actor GPPWorker {
         if let bad = modelParams.keys.first(where: { !$0.hasPrefix("x-") }) {
             throw GPPError(.invalidRequest, "model_params carries only x- extension keys; got \(bad).")
         }
+        var adapters: [JobAdapter] = []
+        if let a = m["adapters"] {
+            guard let items = a.arrayValue else { throw GPPError(.invalidRequest, "adapters is an array.") }
+            adapters = try items.enumerated().map { try JobAdapter.decode($1, index: $0) }
+            let ids = adapters.map(\.id)
+            if Set(ids).count != ids.count { throw GPPError(.invalidRequest, "adapters names an adapter twice.") }
+        }
         var seed: UInt64?
         if let s = m["seed"] {
             guard let i = s.intValue, i >= 0 else { throw GPPError(.invalidRequest, "seed is a non-negative integer.") }
@@ -617,7 +707,7 @@ public actor GPPWorker {
         return Job(requestID: id, job: m["job"]?.stringValue ?? "", operation: m["operation"]?.stringValue ?? "",
                    model: m["model"]?.stringValue ?? "", lane: m["lane"]?.stringValue ?? "",
                    inputs: try inputsObject.mapValues(paths), params: params, modelParams: modelParams,
-                   adapters: m["adapters"]?.arrayValue ?? [], seed: seed,
+                   adapters: adapters, seed: seed,
                    outputDir: URL(fileURLWithPath: outputDir, isDirectory: true))
     }
 
@@ -638,6 +728,17 @@ public actor GPPWorker {
                 return GPPError(.materializeFailed, "The models volume has \(free) bytes free; this lane needs \(required).",
                                 detail: ["required_bytes": .int(Int64(clamping: required)),
                                          "free_bytes": .int(Int64(clamping: free))])
+            case .invalidAdapter(let id, let problems):
+                return GPPError(.invalidRequest, "Adapter \(id) can't be registered: \(problems.joined(separator: "; ")).")
+            case .licenseRejected:
+                return GPPError(.invalidRequest, "\(e)")
+            case .adapterNotMaterialized(let id):
+                return GPPError(.notMaterialized, "Adapter \(id) isn't on disk.", retryable: true)
+            case .adapterDigestMismatch(let id, let expected, let actual):
+                return GPPError(.materializeFailed, "Adapter \(id)'s file has sha256 \(actual), not the pinned \(expected); it was deleted.",
+                                detail: ["expected_sha256": .string(expected), "actual_sha256": .string(actual)])
+            case .adapterStoreUnset(let id):
+                return GPPError(.internal, "Adapter \(id): the engine has no models root.")
             case .preemptionRetryExhausted:
                 return GPPError(.outOfMemory, "\(e)", retryable: true)
             default:
