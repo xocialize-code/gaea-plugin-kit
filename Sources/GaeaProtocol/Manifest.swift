@@ -112,15 +112,19 @@ public struct PluginManifest: Codable, Sendable {
         public var params: JSONValue?
         public var defaults: JSONValue?
         public var limits: Limits?
+        /// Which adapters the model takes for this operation (§4.3). Absent: none.
+        public var adapterSupport: AdapterSupport?
+        /// Host-side facts per shipped adapter, by id (`AdapterMeta`); `adapterMetas` decodes them.
         public var adaptersMeta: JSONValue?
 
         enum CodingKeys: String, CodingKey {
-            case operation, profile, model, lanes, params, defaults, limits, adaptersMeta = "adapters_meta"
+            case operation, profile, model, lanes, params, defaults, limits, adapterSupport = "adapter_support",
+                 adaptersMeta = "adapters_meta"
         }
 
         public init(operation: String, profile: String, model: JSONValue, lanes: [String]? = nil,
                     params: JSONValue? = nil, defaults: JSONValue? = nil, limits: Limits? = nil,
-                    adaptersMeta: JSONValue? = nil) {
+                    adapterSupport: AdapterSupport? = nil, adaptersMeta: JSONValue? = nil) {
             self.operation = operation
             self.profile = profile
             self.model = model
@@ -128,11 +132,90 @@ public struct PluginManifest: Codable, Sendable {
             self.params = params
             self.defaults = defaults
             self.limits = limits
+            self.adapterSupport = adapterSupport
             self.adaptersMeta = adaptersMeta
         }
 
         /// The model id the offer names (`model.id`).
         public var modelID: String? { model["id"]?.stringValue }
+
+        /// `adaptersMeta`, typed. An entry that doesn't decode is left out.
+        public var adapterMetas: [String: AdapterMeta] {
+            guard let object = adaptersMeta?.objectValue else { return [:] }
+            return object.compactMapValues { try? $0.decode(AdapterMeta.self) }
+        }
+    }
+
+    /// Which adapters a model takes for one operation (§4.3), from its package's `AdapterSupport`.
+    public struct AdapterSupport: Codable, Sendable, Equatable {
+        public struct Strength: Codable, Sendable, Equatable {
+            public var min: Double
+            public var max: Double
+            public init(min: Double, max: Double) { self.min = min; self.max = max }
+        }
+
+        /// The package's adapter base id (MLXToolKit `AdapterSupport.baseModel`), e.g. `qwen-image`.
+        public var baseModel: String
+        public var formats: [String]
+        public var kinds: [String]
+        public var maxCount: Int
+        public var strength: Strength
+
+        enum CodingKeys: String, CodingKey {
+            case baseModel = "base_model", formats, kinds, maxCount = "max_count", strength
+        }
+
+        public init(baseModel: String, formats: [String], kinds: [String], maxCount: Int, strength: Strength) {
+            self.baseModel = baseModel
+            self.formats = formats
+            self.kinds = kinds
+            self.maxCount = maxCount
+            self.strength = strength
+        }
+    }
+
+    /// The pinned file a worker fetches into the models root and checks (§4.3, §4.8).
+    public struct AdapterSource: Codable, Sendable, Equatable {
+        public var repo: String
+        /// A 40-hex commit.
+        public var revision: String
+        public var file: String
+        public var sha256: String
+        public var bytes: Int?
+
+        public init(repo: String, revision: String, file: String, sha256: String, bytes: Int? = nil) {
+            self.repo = repo
+            self.revision = revision
+            self.file = file
+            self.sha256 = sha256
+            self.bytes = bytes
+        }
+    }
+
+    /// Host-side facts for one shipped adapter (§4.3).
+    public struct AdapterMeta: Codable, Sendable, Equatable {
+        public var trigger: String?
+        public var promptTemplate: String?
+        public var status: String?
+        public var clearance: [String: String]?
+        public var bytes: Int?
+        public var format: String
+        public var source: AdapterSource
+
+        enum CodingKeys: String, CodingKey {
+            case trigger, promptTemplate = "prompt_template", status, clearance, bytes, format, source
+        }
+
+        public init(trigger: String? = nil, promptTemplate: String? = nil, status: String? = nil,
+                    clearance: [String: String]? = nil, bytes: Int? = nil, format: String, source: AdapterSource) {
+            self.trigger = trigger
+            self.promptTemplate = promptTemplate
+            self.status = status
+            self.clearance = clearance
+            self.bytes = bytes
+            self.format = format
+            self.source = source
+        }
     }
 
     public struct Limits: Codable, Sendable, Equatable {
