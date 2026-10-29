@@ -123,8 +123,25 @@ public struct ModelDefinition: Sendable {
 
     /// The lane's resolution, the way the manifest records it (no budget: the largest declared
     /// footprint, which never under-reserves).
+    ///
+    /// A configuration that is both `WeightSourcing` and `BundledWeightSourcing`, and whose variant
+    /// ships its weights in the package (NAFNet's signage checkpoint), resolves in MLXToolKit 1.58 as
+    /// `engine` with nothing to download; it is recorded as `bundled`, which is what it is.
     public func resolved(_ lane: LaneDefinition) -> ResolvedLane {
-        ResolvedLane(manifest: manifest, configuration: lane.configuration)
+        let resolved = ResolvedLane(manifest: manifest, configuration: lane.configuration)
+        guard resolved.materialization == .engine, resolved.weightSources.isEmpty,
+              let bundled = lane.configuration as? BundledWeightSourcing, !bundled.bundledWeightSources.isEmpty else {
+            return resolved
+        }
+        return ResolvedLane(
+            contractVersion: resolved.contractVersion, quant: resolved.quant, footprintQuant: resolved.footprintQuant,
+            persistentBytes: resolved.persistentBytes, persistentSource: resolved.persistentSource,
+            peakTransientBytes: resolved.peakTransientBytes, peakTransientSource: resolved.peakTransientSource,
+            activationScaling: resolved.activationScaling,
+            expectedWeightReadBytesPerRun: resolved.expectedWeightReadBytesPerRun,
+            minSustainedReadBytesPerSecond: resolved.minSustainedReadBytesPerSecond,
+            materialization: .bundled, weightSources: [], selfMaterializing: resolved.selfMaterializing,
+            capabilities: resolved.capabilities)
     }
 }
 
