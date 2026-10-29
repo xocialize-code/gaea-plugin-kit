@@ -14,9 +14,17 @@ public final class GPPConnection: @unchecked Sendable {
         self.write = write
     }
 
-    /// stdout. Nothing else may write to it (logs go to stderr).
+    /// stdout, kept for GPP alone: the process's stdout is moved to a private descriptor that only this connection
+    /// writes, and file descriptor 1 is pointed at stderr. So a library that `print`s (MLXServeCore's weight prewarmer
+    /// does) lands in the worker's log instead of in the middle of the protocol. Call it once, before anything prints.
     public static func standardOutput() -> GPPConnection {
-        let out = FileHandle.standardOutput
+        fflush(stdout)
+        let gpp = dup(STDOUT_FILENO)
+        guard gpp >= 0, dup2(STDERR_FILENO, STDOUT_FILENO) >= 0 else {
+            let out = FileHandle.standardOutput
+            return GPPConnection { out.write($0) }
+        }
+        let out = FileHandle(fileDescriptor: gpp, closeOnDealloc: false)
         return GPPConnection { out.write($0) }
     }
 
