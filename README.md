@@ -1,7 +1,7 @@
 # GaeaPluginKit
 
 GaeaPluginKit turns MLXEngine model packages into a Gaea plugin worker. The worker is a signed executable in a
-`.gaeaplugin` bundle that speaks the Gaea Plugin Protocol v1 on stdin and stdout (xocialize/gaea, `spec/GPP-1.md`).
+`.gaeaplugin` bundle that speaks the Gaea Plugin Protocol v1 on stdin and stdout (xocialize-code/gaea, `spec/GPP-1.md`).
 The kit also writes the bundle's `manifest.json` from the plugin's own code, so the manifest can't drift from the
 worker.
 
@@ -23,7 +23,7 @@ import GaeaPluginKit
 
 let plugin = GaeaPluginDefinition(
     id: "com.xocialize.gaea.z-image", version: "0.1.0", team: "CFZS6RXUCP",
-    repo: "https://github.com/xocialize/gaea-plugin-z-image", title: "Z-Image", license: "Apache-2.0",
+    repo: "https://github.com/xocialize-code/gaea-plugin-z-image", title: "Z-Image", license: "Apache-2.0",
     executable: "gaea-z-image-worker",
     models: [.engine(ZImageTurboT2IPackage.self, id: "z-image-turbo", title: "Z-Image Turbo",
                      lanes: [LaneDefinition(id: "int4", default: true, configuration: ZImageConfiguration.turbo(quant: .int4))],
@@ -50,8 +50,8 @@ await GaeaPluginMain.run(plugin)
   runs NERVE under the words the text guard protects in a Nacre job.
 - Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
 
-[gaea-plugin-demo](https://github.com/xocialize/gaea-plugin-demo) is the template: bundle layout, signing, checks,
-notarization and release CI. [gaea-plugin-z-image](https://github.com/xocialize/gaea-plugin-z-image) is the first
+[gaea-plugin-demo](https://github.com/xocialize-code/gaea-plugin-demo) is the template: bundle layout, signing, checks,
+notarization and release CI. [gaea-plugin-z-image](https://github.com/xocialize-code/gaea-plugin-z-image) is the first
 plugin on an MLXEngine package.
 
 `gaea-plugin-check <bundle> [--operation op] [--model id] [--lane id] [--params json] [--model-params json] [--seed N]
@@ -84,7 +84,7 @@ per-job channel, and the monitor's stream is keyed by package. With one run per 
 swift test
 ```
 
-The tests need a checkout of xocialize/gaea, at `../gaea-mes-media-server` or `GAEA_SPEC_ROOT`. They:
+The tests need a checkout of xocialize-code/gaea, at `../gaea-mes-media-server` or `GAEA_SPEC_ROOT`. They:
 
 - generate `examples/v1/manifest/{demo,z-image}.json` from code, check the result is the same JSON, and run
   `validate.py --manifest` on it;

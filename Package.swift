@@ -2,7 +2,7 @@
 import PackageDescription
 
 // GaeaPluginKit turns MLXEngine model packages into a Gaea plugin worker: a process that speaks
-// the Gaea Plugin Protocol (GPP v1, xocialize/gaea spec/GPP-1.md) on stdin and stdout, and writes
+// the Gaea Plugin Protocol (GPP v1, xocialize-code/gaea spec/GPP-1.md) on stdin and stdout, and writes
 // its own manifest.json at build time.
 //
 // - GaeaProtocol is MLX-free: JSON values, the manifest's types and GPP's vocabulary. The Gaea host

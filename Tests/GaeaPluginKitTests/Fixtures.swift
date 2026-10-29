@@ -5,7 +5,7 @@ import MLXHubMetadata
 import MLXServeCore
 import MLXToolKit
 
-/// The Gaea spec repo (xocialize/gaea): its examples are the contract these tests replay, and its
+/// The Gaea spec repo (xocialize-code/gaea): its examples are the contract these tests replay, and its
 /// validator checks every line the kit emits. `GAEA_SPEC_ROOT` overrides the sibling checkout.
 enum Spec {
     static let root: URL = {
@@ -44,7 +44,7 @@ struct Bundled: PackageConfiguration, BundledWeightSourcing {
 /// The demo's package manifest, as tools/manifest-gen declares it.
 let demoPackageManifest = PackageManifest(
     license: LicenseDeclaration(weightLicense: .apache2, portCodeLicense: .apache2),
-    provenance: Provenance(sourceRepo: "xocialize/gaea-plugin-demo", revision: "0.2.0", tier: 1),
+    provenance: Provenance(sourceRepo: "xocialize-code/gaea-plugin-demo", revision: "0.2.0", tier: 1),
     requirements: RequirementsManifest(
         footprints: [QuantFootprint(quant: .fp32, residentBytes: 0, peakActivationBytes: 2_370_000_000)],
         requiredBackends: [.metalGPU]),
@@ -87,7 +87,7 @@ let demoHelper = PluginManifest.Helper(
 func demoDefinition(onConfigure: (@Sendable (WorkerContext, Bool) async throws -> Void)? = nil) -> GaeaPluginDefinition {
     GaeaPluginDefinition(
         id: "com.xocialize.gaea.demo", version: "0.2.0", team: "CFZS6RXUCP",
-        repo: "https://github.com/xocialize/gaea-plugin-demo", title: "Gaea demo worker",
+        repo: "https://github.com/xocialize-code/gaea-plugin-demo", title: "Gaea demo worker",
         summary: "A GPU matmul loop that proves the plugin path end to end: download, verify, launch, run, cancel.",
         license: "Apache-2.0", executable: "gaea-demo-worker", declaresEngine: false,
         models: [.custom(id: "demo-matmul", title: "Demo matmul (GPU smoke test)", manifest: demoPackageManifest,
@@ -220,7 +220,7 @@ let zImageGenerate = EngineOperation("image.generate", outputNames: ["image": "i
 func zImageDefinition(onConfigure: (@Sendable (WorkerContext, Bool) async throws -> Void)? = nil) -> GaeaPluginDefinition {
     GaeaPluginDefinition(
         id: "com.xocialize.gaea.z-image", version: "0.1.0", team: "CFZS6RXUCP",
-        repo: "https://github.com/xocialize/gaea-plugin-z-image", title: "Z-Image",
+        repo: "https://github.com/xocialize-code/gaea-plugin-z-image", title: "Z-Image",
         summary: "Tongyi-MAI's Z-Image Turbo: fast photoreal text-to-image and image-to-image.",
         license: "MIT", executable: "gaea-z-image-worker",
         models: [.engine(FakeZImagePackage.self, id: "z-image-turbo", title: "Z-Image Turbo",
