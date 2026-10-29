@@ -231,6 +231,20 @@ public actor GPPWorker {
         return id
     }
 
+    /// Another engine model of this plugin, at its default lane, for a self-running operation to compose with
+    /// (`EngineSession.run(_:model:)`). Its weights must be on disk: a run never downloads.
+    private func composedPackage(_ id: String, forRun runID: String, modelsRoot: URL) async throws -> PackageID {
+        guard let model = definition.model(id), case .engine = model.backing, let lane = model.defaultLane else {
+            throw GPPError(.internal, "\(id) is not an engine model of this plugin.")
+        }
+        if let sourcing = lane.configuration as? WeightSourcing,
+           let missing = sourcing.missingWeightSources(storeRoot: modelsRoot).first {
+            throw GPPError(.notMaterialized, "Lane \(lane.id) of \(model.id) has no weights on disk.", retryable: true,
+                           detail: ["repo": .string(missing.repo), "revision": .string(missing.revision ?? "main")])
+        }
+        return try await ensureRegistered(model, lane, forRun: runID)
+    }
+
     private func capability(_ model: ModelDefinition, _ lane: LaneDefinition) throws -> Capability {
         guard let capability = model.resolved(lane).capabilities.first ?? model.manifest.capabilities.first else {
             throw GPPError(.invalidRequest, "Lane \(lane.id) of \(model.id) backs no capability at its quant.")
@@ -433,7 +447,7 @@ public actor GPPWorker {
                     detail: ["repo": .string(missing.repo), "revision": .string(missing.revision ?? "main")]))
             }
             if let perform = operation.perform {
-                let session = EngineSession(outputDir: job.outputDir) { request in
+                let relay: @Sendable (PackageID, any WireRequest) async throws -> any CapabilityResponse = { package, request in
                     try Task.checkCancellation()
                     return try await RunProgress.$sink.withValue({ report in
                         let fraction = report.step.flatMap { step in
@@ -442,9 +456,14 @@ public actor GPPWorker {
                         context.progress(report.phase.rawValue, step: report.step, of: report.totalSteps, fraction: fraction,
                                          message: nil)
                     }) {
-                        try await engine.run(request, package: packageID)
+                        try await engine.run(request, package: package)
                     }
                 }
+                let session = EngineSession(outputDir: job.outputDir, send: { try await relay(packageID, $0) },
+                                            sendTo: { other, request in
+                    try await relay(try await self.composedPackage(other, forRun: job.requestID, modelsRoot: context.worker.modelsRoot),
+                                    request)
+                })
                 do {
                     return try await perform(job, session)
                 } catch let error as GPPError where error.code == .invalidRequest {

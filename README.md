@@ -44,6 +44,10 @@ await GaeaPluginMain.run(plugin)
 - One engine call per result: `EngineOperation(op, calls: { job in [EngineCall] })` runs them in order, for an MES
   `count` on a capability that returns one image per call. Outputs are listed in call order (`image-0`, `image-1`, …),
   `effective` values are merged, and each warning is kept once. Progress spans the whole job.
+- A self-running operation, `EngineOperation(op) { job, session in … }`, makes the engine calls it decides on with
+  `session.run(request)` and returns its `RunResult` itself. `session.run(request, model: id)` calls another engine
+  model of the same plugin, at its default lane, with its weights already on disk: the forge pack's guarded upscale
+  runs NERVE under the words the text guard protects in a Nacre job.
 - Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
 
 [gaea-plugin-demo](https://github.com/xocialize/gaea-plugin-demo) is the template: bundle layout, signing, checks,

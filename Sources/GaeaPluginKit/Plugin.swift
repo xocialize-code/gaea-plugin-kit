@@ -190,17 +190,27 @@ public struct EngineOperation: Sendable {
 /// package its model registered, with the engine's progress relayed as the run's.
 public struct EngineSession: Sendable {
     let send: @Sendable (any WireRequest) async throws -> any CapabilityResponse
+    let sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)?
     /// Where the run's output files go (`output_dir`).
     public let outputDir: URL
 
-    public init(outputDir: URL, send: @escaping @Sendable (any WireRequest) async throws -> any CapabilityResponse) {
+    public init(outputDir: URL, send: @escaping @Sendable (any WireRequest) async throws -> any CapabilityResponse,
+                sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)? = nil) {
         self.outputDir = outputDir
         self.send = send
+        self.sendTo = sendTo
     }
 
     /// One engine call on the model's package.
     public func run(_ request: any WireRequest) async throws -> any CapabilityResponse {
         try await send(request)
+    }
+
+    /// One engine call on another engine model of the same plugin, at its default lane: a step the job's model composes
+    /// with (a guarded upscale's fast tier, under the words it protects). Its weights must be on disk already.
+    public func run(_ request: any WireRequest, model: String) async throws -> any CapabilityResponse {
+        guard let sendTo else { throw GPPError(.internal, "This session runs only its own model.") }
+        return try await sendTo(model, request)
     }
 }
 
