@@ -172,14 +172,59 @@ public struct PluginManifest: Codable, Sendable {
         public var title: String
         public var summary: String?
         public var params: JSONValue?
+        /// For a prompt-enhance helper (`x-gaea.prompt.enhance`, G-10): the profiles it rewrites with, so Gaea can
+        /// decide whether a prompt needs the model at all before it calls (GPP-1 §4.4).
+        public var profiles: [PromptProfile]?
 
         public init(operation: String, model: String, title: String, summary: String? = nil,
-                    params: JSONValue? = nil) {
+                    params: JSONValue? = nil, profiles: [PromptProfile]? = nil) {
             self.operation = operation
             self.model = model
             self.title = title
             self.summary = summary
             self.params = params
+            self.profiles = profiles
+        }
+    }
+
+    /// One prompt profile a prompt-enhance helper serves: the facts its decision reads, not its instructions.
+    public struct PromptProfile: Codable, Sendable, Equatable {
+        public enum Policy: String, Codable, Sendable { case required, recommended, optional }
+
+        public var id: String
+        public var version: Int
+        public var title: String
+        /// The image models it rewrites prompts for.
+        public var models: [String]
+        public var policy: Policy
+        /// The tasks it has instructions for (`textToImage`, `imageEdit`).
+        public var tasks: [String]
+        /// It answers JSON, not prose.
+        public var structured: Bool
+        /// Its answer suggests a size.
+        public var suggestsSize: Bool
+        /// It lays out a canvas, so it is always told a size.
+        public var laysOutCanvas: Bool
+        /// It needs the large backbone.
+        public var large: Bool
+        /// A prompt that is already JSON goes as typed.
+        public var passThroughStructured: Bool
+        /// Under `recommended`, a prompt this many words long or longer goes as typed.
+        public var detailedAtWords: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case id, version, title, models, policy, tasks, structured, large
+            case suggestsSize = "suggests_size", laysOutCanvas = "lays_out_canvas"
+            case passThroughStructured = "pass_through_structured", detailedAtWords = "detailed_at_words"
+        }
+
+        public init(id: String, version: Int, title: String, models: [String], policy: Policy, tasks: [String],
+                    structured: Bool, suggestsSize: Bool, laysOutCanvas: Bool, large: Bool, passThroughStructured: Bool,
+                    detailedAtWords: Int?) {
+            self.id = id; self.version = version; self.title = title; self.models = models; self.policy = policy
+            self.tasks = tasks; self.structured = structured; self.suggestsSize = suggestsSize
+            self.laysOutCanvas = laysOutCanvas; self.large = large; self.passThroughStructured = passThroughStructured
+            self.detailedAtWords = detailedAtWords
         }
     }
 

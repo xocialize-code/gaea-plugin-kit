@@ -172,6 +172,36 @@ public struct EngineOperation: Sendable {
         self.outputNames = outputNames
         self.calls = calls
     }
+
+    /// When set, the operation runs itself: it gets the job and a session on its model's package, makes
+    /// as many engine calls as it decides to (a second draft when the first is rejected, a step that reads
+    /// the one before), and returns the run's outputs. `calls` and `outputNames` aren't used.
+    public var perform: (@Sendable (Job, EngineSession) async throws -> RunResult)?
+
+    public init(_ operation: String, perform: @escaping @Sendable (Job, EngineSession) async throws -> RunResult) {
+        self.operation = operation
+        self.outputNames = [:]
+        self.calls = { _ in [] }
+        self.perform = perform
+    }
+}
+
+/// What a self-running `EngineOperation` runs its engine calls through: the worker's engine, on the
+/// package its model registered, with the engine's progress relayed as the run's.
+public struct EngineSession: Sendable {
+    let send: @Sendable (any WireRequest) async throws -> any CapabilityResponse
+    /// Where the run's output files go (`output_dir`).
+    public let outputDir: URL
+
+    public init(outputDir: URL, send: @escaping @Sendable (any WireRequest) async throws -> any CapabilityResponse) {
+        self.outputDir = outputDir
+        self.send = send
+    }
+
+    /// One engine call on the model's package.
+    public func run(_ request: any WireRequest) async throws -> any CapabilityResponse {
+        try await send(request)
+    }
 }
 
 /// One engine call for a job: the request, and the values it will use.

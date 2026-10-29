@@ -432,6 +432,25 @@ public actor GPPWorker {
                     retryable: true,
                     detail: ["repo": .string(missing.repo), "revision": .string(missing.revision ?? "main")]))
             }
+            if let perform = operation.perform {
+                let session = EngineSession(outputDir: job.outputDir) { request in
+                    try Task.checkCancellation()
+                    return try await RunProgress.$sink.withValue({ report in
+                        let fraction = report.step.flatMap { step in
+                            report.totalSteps.flatMap { $0 > 0 ? Double(step) / Double($0) : nil }
+                        }
+                        context.progress(report.phase.rawValue, step: report.step, of: report.totalSteps, fraction: fraction,
+                                         message: nil)
+                    }) {
+                        try await engine.run(request, package: packageID)
+                    }
+                }
+                do {
+                    return try await perform(job, session)
+                } catch let error as GPPError where error.code == .invalidRequest {
+                    throw Refused(error: error)
+                }
+            }
             let calls: [EngineCall]
             do {
                 calls = try operation.calls(job)
