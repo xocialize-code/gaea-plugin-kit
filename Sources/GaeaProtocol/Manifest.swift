@@ -116,15 +116,18 @@ public struct PluginManifest: Codable, Sendable {
         public var adapterSupport: AdapterSupport?
         /// Host-side facts per shipped adapter, by id (`AdapterMeta`); `adapterMetas` decodes them.
         public var adaptersMeta: JSONValue?
+        /// What the model can do beyond the operation's required behaviour, by key (§4.3): `composite` for
+        /// `image.decompose`, whose offers make one. Absent keys are false.
+        public var supports: [String: Bool]?
 
         enum CodingKeys: String, CodingKey {
             case operation, profile, model, lanes, params, defaults, limits, adapterSupport = "adapter_support",
-                 adaptersMeta = "adapters_meta"
+                 adaptersMeta = "adapters_meta", supports
         }
 
         public init(operation: String, profile: String, model: JSONValue, lanes: [String]? = nil,
                     params: JSONValue? = nil, defaults: JSONValue? = nil, limits: Limits? = nil,
-                    adapterSupport: AdapterSupport? = nil, adaptersMeta: JSONValue? = nil) {
+                    adapterSupport: AdapterSupport? = nil, adaptersMeta: JSONValue? = nil, supports: [String: Bool]? = nil) {
             self.operation = operation
             self.profile = profile
             self.model = model
@@ -134,6 +137,7 @@ public struct PluginManifest: Codable, Sendable {
             self.limits = limits
             self.adapterSupport = adapterSupport
             self.adaptersMeta = adaptersMeta
+            self.supports = supports
         }
 
         /// The model id the offer names (`model.id`).
@@ -227,16 +231,18 @@ public struct PluginManifest: Codable, Sendable {
         public var maxSeconds: Double?
         public var maxFrames: Int?
         public var sampleRates: [Int]?
+        /// The most layers `image.decompose` returns (MES Image §3.2's `layer_count`).
+        public var maxLayerCount: Int?
 
         enum CodingKeys: String, CodingKey {
             case maxPixels = "max_pixels", minSide = "min_side", maxSide = "max_side",
                  sizeMultiple = "size_multiple", maxImages = "max_images", maxSeconds = "max_seconds",
-                 maxFrames = "max_frames", sampleRates = "sample_rates"
+                 maxFrames = "max_frames", sampleRates = "sample_rates", maxLayerCount = "max_layer_count"
         }
 
         public init(maxPixels: Int? = nil, minSide: Int? = nil, maxSide: Int? = nil, sizeMultiple: Int? = nil,
                     maxImages: Int? = nil, maxSeconds: Double? = nil, maxFrames: Int? = nil,
-                    sampleRates: [Int]? = nil) {
+                    sampleRates: [Int]? = nil, maxLayerCount: Int? = nil) {
             self.maxPixels = maxPixels
             self.minSide = minSide
             self.maxSide = maxSide
@@ -245,6 +251,7 @@ public struct PluginManifest: Codable, Sendable {
             self.maxSeconds = maxSeconds
             self.maxFrames = maxFrames
             self.sampleRates = sampleRates
+            self.maxLayerCount = maxLayerCount
         }
     }
 

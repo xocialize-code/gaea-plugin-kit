@@ -50,6 +50,12 @@ await GaeaPluginMain.run(plugin)
   runs NERVE under the words the text guard protects in a Nacre job.
 - Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
 
+### Layer limits and supports (0.6.0)
+
+An `image.decompose` offer (MES Image §3.2) says how many layers its model returns and whether it makes a composite:
+`PluginManifest.Limits(maxLayerCount: 12)` and `Offer(…, supports: ["composite": true])`, written as
+`limits.max_layer_count` and `supports` (GPP-1 §4.3). Absent `supports` keys are false.
+
 ### Adapters (0.5.0)
 
 A model whose package declares `AdapterSupport` on a surface takes LoRA adapters there (GPP-1 §3.3, §4.3, §4.8):
