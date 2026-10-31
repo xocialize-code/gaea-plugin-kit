@@ -492,6 +492,8 @@ public actor GPPWorker {
                     }) { try await streamTTS(request, onChunk) }
                 }, emit: { output, samples, rate, channels, final in
                     try context.emit(output, samples: samples, sampleRate: rate, channels: channels, final: final)
+                }, emitInt16: { output, pcm, rate, channels, final in
+                    try context.emit(output, int16: pcm, sampleRate: rate, channels: channels, final: final)
                 })
                 do {
                     return try await perform(job, session)

@@ -196,9 +196,26 @@ public final class RunContext: @unchecked Sendable {
     /// interleaved when `channels` is 2, at the model's own `sampleRate`; Gaea converts them to the client's format.
     /// Chunks are numbered from 0 per output; mark the last one `final` (an empty final chunk is allowed).
     public func emit(_ output: String, samples: [Float], sampleRate: Int, channels: Int = 1, final: Bool = false) throws {
+        guard samples.count % channels == 0 else {
+            throw GPPError(.internal, "A chunk of \(output) has \(samples.count) samples, not whole \(channels)-channel frames.")
+        }
+        try emit(output, pcm: samples.withUnsafeBufferPointer { Data(buffer: $0) }, encoding: GPP.pcmF32, sampleRate: sampleRate,
+                 channels: channels, final: final)
+    }
+
+    /// Samples a model already made as 16-bit integers (a package's WAV), sent as they are: Gaea passes them to a client
+    /// that asked for `pcm_s16le` at the same rate untouched. `pcm` is little-endian, interleaved, whole frames.
+    public func emit(_ output: String, int16 pcm: Data, sampleRate: Int, channels: Int = 1, final: Bool = false) throws {
+        guard pcm.count % (2 * channels) == 0 else {
+            throw GPPError(.internal, "A chunk of \(output) has \(pcm.count) bytes, not whole 16-bit \(channels)-channel frames.")
+        }
+        try emit(output, pcm: pcm, encoding: GPP.pcmS16, sampleRate: sampleRate, channels: channels, final: final)
+    }
+
+    private func emit(_ output: String, pcm: Data, encoding: String, sampleRate: Int, channels: Int, final: Bool) throws {
         guard job.streams.contains(output) else { throw GPPError(.internal, "The host didn't ask to stream \(output).") }
-        guard sampleRate > 0, (1...2).contains(channels), samples.count % channels == 0 else {
-            throw GPPError(.internal, "A chunk of \(output) has a bad layout: \(samples.count) samples, \(channels) channels at \(sampleRate) Hz.")
+        guard sampleRate > 0, (1...2).contains(channels) else {
+            throw GPPError(.internal, "A chunk of \(output) has a bad layout: \(channels) channels at \(sampleRate) Hz.")
         }
         lock.lock()
         if streamFinal.contains(output) {
@@ -211,11 +228,11 @@ public final class RunContext: @unchecked Sendable {
         lock.unlock()
         let directory = job.outputDir.appending(path: "stream", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appending(path: "\(output)-\(index).f32")
-        try samples.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: file)
+        let file = directory.appending(path: "\(output)-\(index).\(encoding == GPP.pcmS16 ? "s16" : "f32")")
+        try pcm.write(to: file)
         var m: [String: JSONValue] = ["type": "chunk", "re": .string(job.requestID), "job": .string(job.job),
                                       "output": .string(output), "index": .int(Int64(index)), "path": .string(file.path),
-                                      "media_type": "audio/pcm", "encoding": .string(GPP.pcmF32),
+                                      "media_type": "audio/pcm", "encoding": .string(encoding),
                                       "sample_rate": .int(Int64(sampleRate)), "channels": .int(Int64(channels))]
         if final { m["final"] = true }
         connection.send(m)

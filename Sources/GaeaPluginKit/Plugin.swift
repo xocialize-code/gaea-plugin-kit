@@ -209,6 +209,7 @@ public struct EngineSession: Sendable {
     let sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)?
     let streamTTS: (@Sendable (TTSRequest, @escaping @Sendable (TTSStreamChunk) -> Void) async throws -> TTSResponse)?
     let emitChunk: (@Sendable (String, [Float], Int, Int, Bool) throws -> Void)?
+    let emitInt16: (@Sendable (String, Data, Int, Int, Bool) throws -> Void)?
     /// Where the run's output files go (`output_dir`).
     public let outputDir: URL
     /// The outputs the host asked to stream (GPP-1 §3.3 `streams`).
@@ -218,13 +219,15 @@ public struct EngineSession: Sendable {
                 send: @escaping @Sendable (any WireRequest) async throws -> any CapabilityResponse,
                 sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)? = nil,
                 streamTTS: (@Sendable (TTSRequest, @escaping @Sendable (TTSStreamChunk) -> Void) async throws -> TTSResponse)? = nil,
-                emit: (@Sendable (String, [Float], Int, Int, Bool) throws -> Void)? = nil) {
+                emit: (@Sendable (String, [Float], Int, Int, Bool) throws -> Void)? = nil,
+                emitInt16: (@Sendable (String, Data, Int, Int, Bool) throws -> Void)? = nil) {
         self.outputDir = outputDir
         self.streams = streams
         self.send = send
         self.sendTo = sendTo
         self.streamTTS = streamTTS
         self.emitChunk = emit
+        self.emitInt16 = emitInt16
     }
 
     /// Whether the host asked for `output` as a stream.
@@ -235,6 +238,13 @@ public struct EngineSession: Sendable {
     public func emit(_ output: String, samples: [Float], sampleRate: Int, channels: Int = 1, final: Bool = false) throws {
         guard let emitChunk else { throw GPPError(.internal, "This session can't stream.") }
         try emitChunk(output, samples, sampleRate, channels, final)
+    }
+
+    /// Samples already made as 16-bit integers (a package's WAV data), sent as they are; Gaea passes them through to a
+    /// client that asked for `pcm_s16le` at the same rate.
+    public func emit(_ output: String, int16 pcm: Data, sampleRate: Int, channels: Int = 1, final: Bool = false) throws {
+        guard let emitInt16 else { throw GPPError(.internal, "This session can't stream.") }
+        try emitInt16(output, pcm, sampleRate, channels, final)
     }
 
     /// One TTS call on a `StreamEmitting` package (MLXEngine contract 1.25), each of its chunks sent to the host as

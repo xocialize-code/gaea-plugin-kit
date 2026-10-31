@@ -7,9 +7,9 @@ public enum GPP {
     public static let version = 1
     /// The longest line either side may send, newline excluded.
     public static let maxLineBytes = 1 << 20
-    /// How a streamed chunk's samples are laid out in its file (GPP-1 §3.3): little-endian 32-bit float,
-    /// interleaved, at the chunk's `sample_rate` and `channels`.
-    public static let pcmF32 = "pcm_f32le"
+    /// How a streamed chunk's samples are laid out in its file (GPP-1 §3.3.1): little-endian 32-bit float, or 16-bit
+    /// signed integer, interleaved, at the chunk's `sample_rate` and `channels`.
+    public static let pcmF32 = "pcm_f32le", pcmS16 = "pcm_s16le"
     /// The one Developer ID team v1 trusts (G-22, AB-D-0184). A bundle signed by any other team is
     /// refused, and so is a manifest naming one. A trust list the operator approves ships in G4.
     public static let trustedTeam = "CFZS6RXUCP"

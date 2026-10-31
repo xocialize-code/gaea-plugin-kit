@@ -16,11 +16,13 @@ final class FakeTone: PluginModel, @unchecked Sendable {
         guard job.streams("audio") else {
             return RunResult(outputs: [.value("audio", .int(Int64(samples.count)))])
         }
-        for i in 0..<3 {
+        for i in 0..<2 {
             try context.checkCancellation()
-            try context.emit("audio", samples: Array(samples[(i * Self.chunk)..<((i + 1) * Self.chunk)]), sampleRate: 24000,
-                             final: i == 2)
+            try context.emit("audio", samples: Array(samples[(i * Self.chunk)..<((i + 1) * Self.chunk)]), sampleRate: 24000)
         }
+        // The last piece as 16-bit integers, the way a package's WAV holds them.
+        let ints = samples[(2 * Self.chunk)...].map { Int16($0 * 32767) }
+        try context.emit("audio", int16: ints.withUnsafeBufferPointer { Data(buffer: $0) }, sampleRate: 24000, final: true)
         return RunResult(outputs: [.streamed("audio")], effective: ["voice": "tone-a", "asset": .string(job.asset("voice_ref") ?? "none")])
     }
 }
@@ -95,12 +97,13 @@ struct StreamTests {
         #expect(try await next()["type"] == "memory")
         #expect(chunks.count == 3)
         for (i, chunk) in chunks.enumerated() {
-            #expect(chunk["index"]?.intValue == i && chunk["output"] == "audio" && chunk["encoding"] == "pcm_f32le")
+            #expect(chunk["index"]?.intValue == i && chunk["output"] == "audio")
+            #expect(chunk["encoding"]?.stringValue == (i == 2 ? "pcm_s16le" : "pcm_f32le"))
             #expect(chunk["sample_rate"] == 24000 && chunk["channels"] == 1)
             #expect((chunk["final"] == true) == (i == 2))
             let path = try #require(chunk["path"]?.stringValue)
             #expect(path.hasPrefix(out + "/"))
-            #expect(try Data(contentsOf: URL(fileURLWithPath: path)).count == FakeTone.chunk * 4)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: path)).count == FakeTone.chunk * (i == 2 ? 2 : 4))
         }
 
         await send(#"{"type":"asset_removed","id":"h3","asset":"ast_123"}"#)
