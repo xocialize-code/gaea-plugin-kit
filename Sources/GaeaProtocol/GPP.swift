@@ -60,6 +60,8 @@ public enum GPP {
         case notMaterialized = "not_materialized"
         case materializeFailed = "materialize_failed"
         case outOfMemory = "out_of_memory"
+        /// `prepare` refused: the weights' volume reads slower than the lane's floor (GPP-1 §3.2.1).
+        case storageBelowFloor = "storage_below_floor"
         case modelError = "model_error"
         case storageFailed = "storage_failed"
         case busy

@@ -322,17 +322,22 @@ public actor GPPWorker {
         do {
             let (model, laneOpt) = try lookup(m)
             let lane = laneOpt!
-            try await prepare(model, lane, re: id)
-            connection.send(["type": "prepared", "re": .string(id), "model": .string(model.id),
-                             "lane": .string(lane.id), "seconds": .double(seconds(since: began))])
+            let storage = try await prepare(model, lane, re: id)
+            var prepared: [String: JSONValue] = ["type": "prepared", "re": .string(id), "model": .string(model.id),
+                                                 "lane": .string(lane.id), "seconds": .double(seconds(since: began))]
+            if let storage { prepared["storage"] = storage }
+            connection.send(prepared)
             await sendMemory(re: nil)
         } catch {
             reply(error: Self.translate(error), re: id)
         }
     }
 
-    /// Load a lane to resident. A download on the way is reported as `materialize.progress` under `re`.
-    private func prepare(_ model: ModelDefinition, _ lane: LaneDefinition, re: String?) async throws {
+    /// Load a lane to resident. A download on the way is reported as `materialize.progress` under `re`. Returns what the
+    /// engine measured about the weights' volume (GPP-1 §3.2.1), when it measured it; a volume below the lane's floor is
+    /// `storage_below_floor`, with the measurement in `detail`.
+    @discardableResult
+    private func prepare(_ model: ModelDefinition, _ lane: LaneDefinition, re: String?) async throws -> JSONValue? {
         guard let engine, let context else { throw GPPError(.internal, "not configured") }
         switch model.backing {
         case .engine:
@@ -352,10 +357,25 @@ public actor GPPWorker {
                 }
             }
             defer { relay?.cancel() }
-            _ = try await engine.prepare(capability, package: packageID)
+            do {
+                _ = try await engine.prepare(capability, package: packageID)
+            } catch let error as PackageError {
+                guard case .weightsVolumeBelowFloor(let why) = error else { throw error }
+                var detail: [String: JSONValue] = [:]
+                if let v = await engine.volumeCharacterization(package: packageID.description) {
+                    detail["volume"] = .string(v.volumePath)
+                    if let read = v.sustainedReadBytesPerSecond { detail["read_bytes_per_s"] = .int(Int64(clamping: read)) }
+                }
+                if let floor = model.resolved(lane).minSustainedReadBytesPerSecond {
+                    detail["floor_bytes_per_s"] = .int(Int64(clamping: floor))
+                }
+                throw GPPError(.storageBelowFloor, why, detail: detail.isEmpty ? nil : detail)
+            }
+            return await Self.storage(engine.volumeCharacterization(package: packageID.description),
+                                      engine.storageAdvisories(package: packageID.description))
         case .custom(let make):
             var state = customs[model.id] ?? CustomState(instance: make(), preparedLane: nil, tenant: nil)
-            if state.preparedLane == lane.id { return }
+            if state.preparedLane == lane.id { return nil }
             if state.preparedLane != nil {
                 await state.instance.unload()
                 state.tenant?.withdraw()
@@ -370,7 +390,24 @@ public actor GPPWorker {
                 transientBytes: resolved.peakTransientBytes)
             state.preparedLane = lane.id
             customs[model.id] = state
+            return nil
         }
+    }
+
+    /// The engine's volume measurement and storage advisories as `prepared.storage` (GPP-1 §3.2.1).
+    static func storage(_ volume: VolumeCharacterization?, _ advisories: [StorageAdvisory]) -> JSONValue? {
+        guard volume != nil || !advisories.isEmpty else { return nil }
+        var o: [String: JSONValue] = [:]
+        if let v = volume {
+            o["volume"] = .string(v.volumePath)
+            if let read = v.sustainedReadBytesPerSecond { o["read_bytes_per_s"] = .int(Int64(clamping: read)) }
+            if let p = v.protocolName { o["protocol"] = .string(p) }
+            if let r = v.isRemovable { o["removable"] = .bool(r) }
+        }
+        if !advisories.isEmpty {
+            o["advisories"] = .array(advisories.map { ["kind": .string($0.kind.rawValue), "message": .string($0.message)] })
+        }
+        return .object(o)
     }
 
     // MARK: - unload
@@ -799,6 +836,7 @@ public actor GPPWorker {
             switch e {
             case .unsupportedCapability: return GPPError(.unsupportedOperation, "\(e)")
             case .unsupportedRequestFeature(let what): return GPPError(.invalidRequest, what)
+            case .weightsVolumeBelowFloor(let why): return GPPError(.storageBelowFloor, why)
             default: return GPPError(.modelError, "\(e)")
             }
         }

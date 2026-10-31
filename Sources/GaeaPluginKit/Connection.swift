@@ -182,6 +182,19 @@ public final class RunContext: @unchecked Sendable {
         connection.send(m)
     }
 
+    /// A preview of the run so far (a frame, a draft), an image already written under `output_dir` (GPP-1 §3.3). Gaea
+    /// sends it as the MES job's preview and deletes the file. It rides a `progress` line, at the run's latest step.
+    public func preview(_ file: URL, mediaType: String = "image/png", stage: String = "preview") {
+        var m: [String: JSONValue] = ["type": "progress", "re": .string(job.requestID), "job": .string(job.job),
+                                      "stage": .string(GPP.isName(stage) ? stage : GPP.stageName(stage)),
+                                      "preview": ["path": .string(file.path), "media_type": .string(mediaType)]]
+        lock.lock()
+        if let lastStep { m["step"] = .int(Int64(lastStep)) }
+        if let lastOf { m["of"] = .int(Int64(lastOf)) }
+        lock.unlock()
+        connection.send(m)
+    }
+
     /// One piece of a streamed output, already written under `output_dir` (MES RFC 0002).
     public func chunk(output: String, index: Int, file: URL, mediaType: String, final: Bool = false) {
         var m: [String: JSONValue] = ["type": "chunk", "re": .string(job.requestID), "job": .string(job.job),

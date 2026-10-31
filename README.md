@@ -66,6 +66,19 @@ For MES Audio 0.1 (media-engine-spec v0.7.0, GPP-1 §3.3.1, §3.3.2, §4.3):
   and drop it in `onAssetRemoved(asset, resident)`: `resident.run(request, model:)` sends a package its own eviction
   call while it is loaded, and does nothing when it isn't (0.8.0).
 
+### Video, previews and the weights' volume (0.9.0)
+
+For Gaea's video phase (GPP-1 §3.2.1, §3.3, §3.3.3):
+
+- **Video in and out.** A video input arrives as an MP4 (H.264 or HEVC, with AAC audio where there is sound), whatever
+  the client sent. Write outputs as MP4 or QuickTime files (`.file("video", url, mediaType: "video/mp4")`): Gaea reads
+  their facts from the file. Engine packages take them as MLXToolKit's `Video(format: .mp4, data:)`.
+- **Previews.** `context.preview(fileURL)` sends an image you've written under the run's `output_dir` (a frame, a draft)
+  as the MES job's preview. Gaea reads the file and deletes it.
+- **The weights' volume.** An engine lane with a `minSustainedReadBytesPerSecond` floor is refused at `prepare` when the
+  engine measures its volume below the floor. The kit sends that as `storage_below_floor`, with the measurement, and
+  Gaea falls back to a lane the volume can feed. A `prepared` line carries the engine's measurement as `storage`.
+
 ### Layer limits and supports (0.6.0)
 
 An `image.decompose` offer (MES Image §3.2) says how many layers its model returns and whether it makes a composite:
