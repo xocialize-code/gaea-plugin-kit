@@ -63,7 +63,8 @@ For MES Audio 0.1 (media-engine-spec v0.7.0, GPP-1 §3.3.1, §3.3.2, §4.3):
   "sample_rate": 24000, "channels": 1, "seed": false]`, `"limits": ["max_text_chars": 4000]`), and the preset voices
   in `Offer(…, voices: [...])` as MES `Voice` objects.
 - **Assets.** `job.asset("voice_ref")` is the MES asset id behind an input. Key anything cached from an input by it,
-  and drop it in `onAssetRemoved`.
+  and drop it in `onAssetRemoved(asset, resident)`: `resident.run(request, model:)` sends a package its own eviction
+  call while it is loaded, and does nothing when it isn't (0.8.0).
 
 ### Layer limits and supports (0.6.0)
 

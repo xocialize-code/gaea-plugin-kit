@@ -153,10 +153,19 @@ public actor GPPWorker {
         case "asset_removed":
             // Nothing answers it (GPP-1 §3.3); the plugin drops what it cached under the asset, if anything.
             if let asset = message["asset"]?.stringValue, let hook = definition.onAssetRemoved {
-                Task { await hook(asset) }
+                let resident = ResidentEngine { [weak self] model, request in try await self?.runIfResident(request, model: model) }
+                Task { await hook(asset, resident) }
             }
         default: protocolError("Line \(lineNumber) of stdin: \(type) is not handled; ignored.")
         }
+    }
+
+    /// A request on an engine model whose package is loaded now (`ResidentEngine`); nil when it isn't.
+    func runIfResident(_ request: any WireRequest, model: String) async throws -> (any CapabilityResponse)? {
+        guard let engine, registeredLane[model] != nil else { return nil }
+        let id = PackageID(model)
+        guard await engine.residentPackages[id] != nil else { return nil }
+        return try await engine.run(request, package: id)
     }
 
     /// stdin ended: the host is gone. Finish like `shutdown`.

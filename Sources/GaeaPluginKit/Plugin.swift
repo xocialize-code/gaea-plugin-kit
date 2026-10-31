@@ -29,9 +29,10 @@ public struct GaeaPluginDefinition: Sendable {
     /// Called after every `configured` (the first with `initial == true`): read settings, warm the
     /// plugin store. Runs in its own task, so it may await storage requests.
     public var onConfigure: (@Sendable (WorkerContext, _ initial: Bool) async throws -> Void)?
-    /// Called when the host sends `asset_removed` (GPP-1 §3.3, MES Base §13 rule 6): drop anything cached under that
-    /// asset id (an encoded voice reference) within 60 s.
-    public var onAssetRemoved: (@Sendable (String) async -> Void)?
+    /// Called when the host sends `asset_removed` (GPP-1 §3.3.2, MES Base §13 rule 6): drop anything cached under that
+    /// asset id (an encoded voice reference) within 60 s. `ResidentEngine` runs a request on one of the plugin's engine
+    /// models while its package is loaded (a package's own eviction call); an unloaded package holds nothing.
+    public var onAssetRemoved: (@Sendable (String, ResidentEngine) async -> Void)?
 
     public init(id: String, version: String, minGaea: String = "0.1.0", team: String, repo: String,
                 title: String, summary: String? = nil, license: String, executable: String,
@@ -39,7 +40,7 @@ public struct GaeaPluginDefinition: Sendable {
                 helpers: [PluginManifest.Helper] = [], settings: [PluginManifest.Setting] = [],
                 storage: PluginManifest.Storage? = nil,
                 onConfigure: (@Sendable (WorkerContext, _ initial: Bool) async throws -> Void)? = nil,
-                onAssetRemoved: (@Sendable (String) async -> Void)? = nil) {
+                onAssetRemoved: (@Sendable (String, ResidentEngine) async -> Void)? = nil) {
         self.id = id
         self.version = version
         self.minGaea = minGaea
@@ -270,6 +271,22 @@ public struct EngineSession: Sendable {
     public func run(_ request: any WireRequest, model: String) async throws -> any CapabilityResponse {
         guard let sendTo else { throw GPPError(.internal, "This session runs only its own model.") }
         return try await sendTo(model, request)
+    }
+}
+
+/// What `onAssetRemoved` runs its engine calls through: the worker's engine, on a model of the plugin only while its
+/// package is loaded. Nothing is loaded for it, and nothing is downloaded.
+public struct ResidentEngine: Sendable {
+    let send: @Sendable (String, any WireRequest) async throws -> (any CapabilityResponse)?
+
+    public init(send: @escaping @Sendable (String, any WireRequest) async throws -> (any CapabilityResponse)?) {
+        self.send = send
+    }
+
+    /// Runs `request` on engine model `model` when its package is resident; nil, and nothing runs, when it isn't.
+    @discardableResult
+    public func run(_ request: any WireRequest, model: String) async throws -> (any CapabilityResponse)? {
+        try await send(model, request)
     }
 }
 

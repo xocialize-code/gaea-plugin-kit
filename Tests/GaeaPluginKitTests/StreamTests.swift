@@ -1,6 +1,7 @@
 import Foundation
 import GaeaPluginKit
 import GaeaProtocol
+import MLXToolKit
 import Testing
 
 /// A tone "speaker" for audio.speak: three chunks of a tenth of a second at 24 kHz when the host asks to stream
@@ -51,7 +52,11 @@ func toneDefinition(removed: Removed? = nil) -> GaeaPluginDefinition {
         models: [.custom(id: "tone", title: "Tone", manifest: demoPackageManifest,
                          lanes: [LaneDefinition(id: "fp32", default: true, configuration: Bundled())], make: { FakeTone() })],
         offers: [toneOffer],
-        onAssetRemoved: { asset in removed?.add(asset) })
+        onAssetRemoved: { asset, resident in
+            removed?.add(asset)
+            // The tone model is custom, not an engine model, so nothing is resident to run on.
+            if (try? await resident.run(TTSRequest(text: ""), model: "tone")) != nil { removed?.add("ran") }
+        })
 }
 
 @Suite("Streamed outputs")
