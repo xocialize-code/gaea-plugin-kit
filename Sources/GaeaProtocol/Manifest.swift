@@ -119,15 +119,19 @@ public struct PluginManifest: Codable, Sendable {
         /// What the model can do beyond the operation's required behaviour, by key (§4.3): `composite` for
         /// `image.decompose`, whose offers make one. Absent keys are false.
         public var supports: [String: Bool]?
+        /// The preset voices the model offers for this operation (§4.3, MES Base §6.5): MES `Voice` objects, `id`
+        /// first. The offer's `model.supports.voices` is their count.
+        public var voices: [JSONValue]?
 
         enum CodingKeys: String, CodingKey {
             case operation, profile, model, lanes, params, defaults, limits, adapterSupport = "adapter_support",
-                 adaptersMeta = "adapters_meta", supports
+                 adaptersMeta = "adapters_meta", supports, voices
         }
 
         public init(operation: String, profile: String, model: JSONValue, lanes: [String]? = nil,
                     params: JSONValue? = nil, defaults: JSONValue? = nil, limits: Limits? = nil,
-                    adapterSupport: AdapterSupport? = nil, adaptersMeta: JSONValue? = nil, supports: [String: Bool]? = nil) {
+                    adapterSupport: AdapterSupport? = nil, adaptersMeta: JSONValue? = nil, supports: [String: Bool]? = nil,
+                    voices: [JSONValue]? = nil) {
             self.operation = operation
             self.profile = profile
             self.model = model
@@ -138,6 +142,7 @@ public struct PluginManifest: Codable, Sendable {
             self.adapterSupport = adapterSupport
             self.adaptersMeta = adaptersMeta
             self.supports = supports
+            self.voices = voices
         }
 
         /// The model id the offer names (`model.id`).

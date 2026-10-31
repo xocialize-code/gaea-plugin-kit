@@ -5,7 +5,7 @@ import MLXToolKit
 /// The versions this kit build writes into hello and the manifest.
 public enum GaeaPluginKitInfo {
     /// This kit's version (`hello.kit.version`).
-    public static let version = "0.5.0"
+    public static let version = "0.7.0"
     /// The mlx-engine-swift release the kit is built and tested against. SwiftPM may resolve a later
     /// 0.x patch; the contract below is read from the linked MLXToolKit itself.
     public static let engineVersion = "0.72.0"

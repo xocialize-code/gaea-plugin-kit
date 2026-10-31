@@ -29,13 +29,17 @@ public struct GaeaPluginDefinition: Sendable {
     /// Called after every `configured` (the first with `initial == true`): read settings, warm the
     /// plugin store. Runs in its own task, so it may await storage requests.
     public var onConfigure: (@Sendable (WorkerContext, _ initial: Bool) async throws -> Void)?
+    /// Called when the host sends `asset_removed` (GPP-1 §3.3, MES Base §13 rule 6): drop anything cached under that
+    /// asset id (an encoded voice reference) within 60 s.
+    public var onAssetRemoved: (@Sendable (String) async -> Void)?
 
     public init(id: String, version: String, minGaea: String = "0.1.0", team: String, repo: String,
                 title: String, summary: String? = nil, license: String, executable: String,
                 declaresEngine: Bool = true, models: [ModelDefinition], offers: [PluginManifest.Offer] = [],
                 helpers: [PluginManifest.Helper] = [], settings: [PluginManifest.Setting] = [],
                 storage: PluginManifest.Storage? = nil,
-                onConfigure: (@Sendable (WorkerContext, _ initial: Bool) async throws -> Void)? = nil) {
+                onConfigure: (@Sendable (WorkerContext, _ initial: Bool) async throws -> Void)? = nil,
+                onAssetRemoved: (@Sendable (String) async -> Void)? = nil) {
         self.id = id
         self.version = version
         self.minGaea = minGaea
@@ -52,6 +56,7 @@ public struct GaeaPluginDefinition: Sendable {
         self.settings = settings
         self.storage = storage
         self.onConfigure = onConfigure
+        self.onAssetRemoved = onAssetRemoved
     }
 
     public func model(_ id: String) -> ModelDefinition? { models.first { $0.id == id } }
@@ -202,14 +207,47 @@ public struct EngineOperation: Sendable {
 public struct EngineSession: Sendable {
     let send: @Sendable (any WireRequest) async throws -> any CapabilityResponse
     let sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)?
+    let streamTTS: (@Sendable (TTSRequest, @escaping @Sendable (TTSStreamChunk) -> Void) async throws -> TTSResponse)?
+    let emitChunk: (@Sendable (String, [Float], Int, Int, Bool) throws -> Void)?
     /// Where the run's output files go (`output_dir`).
     public let outputDir: URL
+    /// The outputs the host asked to stream (GPP-1 §3.3 `streams`).
+    public let streams: [String]
 
-    public init(outputDir: URL, send: @escaping @Sendable (any WireRequest) async throws -> any CapabilityResponse,
-                sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)? = nil) {
+    public init(outputDir: URL, streams: [String] = [],
+                send: @escaping @Sendable (any WireRequest) async throws -> any CapabilityResponse,
+                sendTo: (@Sendable (String, any WireRequest) async throws -> any CapabilityResponse)? = nil,
+                streamTTS: (@Sendable (TTSRequest, @escaping @Sendable (TTSStreamChunk) -> Void) async throws -> TTSResponse)? = nil,
+                emit: (@Sendable (String, [Float], Int, Int, Bool) throws -> Void)? = nil) {
         self.outputDir = outputDir
+        self.streams = streams
         self.send = send
         self.sendTo = sendTo
+        self.streamTTS = streamTTS
+        self.emitChunk = emit
+    }
+
+    /// Whether the host asked for `output` as a stream.
+    public func streams(_ output: String) -> Bool { streams.contains(output) }
+
+    /// Send samples of a streamed output to the host as one `chunk` (GPP-1 §3.3): mono or interleaved floats in [-1, 1]
+    /// at the model's own rate. The last call is `final`. Gaea converts them to what the client asked for.
+    public func emit(_ output: String, samples: [Float], sampleRate: Int, channels: Int = 1, final: Bool = false) throws {
+        guard let emitChunk else { throw GPPError(.internal, "This session can't stream.") }
+        try emitChunk(output, samples, sampleRate, channels, final)
+    }
+
+    /// One TTS call on a `StreamEmitting` package (MLXEngine contract 1.25), each of its chunks sent to the host as
+    /// `output` while it runs. Returns the package's aggregated response, the same `run` would.
+    public func stream(_ request: TTSRequest, output: String = "audio") async throws -> TTSResponse {
+        guard let streamTTS else { throw GPPError(.internal, "This session can't stream.") }
+        let failure = LockedError()
+        let response = try await streamTTS(request) { chunk in
+            do { try self.emit(output, samples: chunk.samples, sampleRate: chunk.sampleRate, final: chunk.isFinal) }
+            catch { failure.set(error) }
+        }
+        if let error = failure.value { throw error }
+        return response
     }
 
     /// One engine call on the model's package.
@@ -223,6 +261,14 @@ public struct EngineSession: Sendable {
         guard let sendTo else { throw GPPError(.internal, "This session runs only its own model.") }
         return try await sendTo(model, request)
     }
+}
+
+/// The first error a chunk callback hit, kept for the run to throw.
+final class LockedError: @unchecked Sendable {
+    private let lock = NSLock()
+    private var error: (any Error)?
+    func set(_ e: any Error) { lock.lock(); if error == nil { error = e }; lock.unlock() }
+    var value: (any Error)? { lock.lock(); defer { lock.unlock() }; return error }
 }
 
 /// One engine call for a job: the request, and the values it will use.
@@ -268,6 +314,8 @@ public struct Output: Sendable, Equatable {
     public var path: String?
     public var mediaType: String?
     public var value: JSONValue?
+    /// The output went to the host as `chunk`s (GPP-1 §3.3); the host builds its file from them.
+    public var streamed = false
 
     public static func file(_ name: String, _ url: URL, mediaType: String) -> Output {
         Output(name: name, path: url.path, mediaType: mediaType, value: nil)
@@ -277,11 +325,17 @@ public struct Output: Sendable, Equatable {
         Output(name: name, path: nil, mediaType: nil, value: value)
     }
 
+    /// An output sent as chunks (`RunContext.emit`, `EngineSession.emit`): listed in the result with no file.
+    public static func streamed(_ name: String) -> Output {
+        Output(name: name, path: nil, mediaType: nil, value: nil, streamed: true)
+    }
+
     var json: JSONValue {
         var o: [String: JSONValue] = ["name": .string(name)]
         if let path { o["path"] = .string(path) }
         if let mediaType { o["media_type"] = .string(mediaType) }
         if let value { o["value"] = value }
+        if streamed { o["streamed"] = true }
         return .object(o)
     }
 }
@@ -317,6 +371,20 @@ public struct Job: Sendable {
     public var adapters: [JobAdapter]
     public var seed: UInt64?
     public var outputDir: URL
+    /// The outputs the host asked to stream (GPP-1 §3.3): send them with `emit` and list them as `.streamed`.
+    public var streams: [String] = []
+    /// The MES asset id behind each input value, by input name (nil for one that isn't an asset): key a cache of what
+    /// the model derives from an input by it, never by the file's bytes (MES Base §13 rule 6).
+    public var assets: [String: [String?]] = [:]
+
+    /// Whether the host asked for `output` as a stream.
+    public func streams(_ output: String) -> Bool { streams.contains(output) }
+
+    /// The asset id of input `name`'s value `index`, if it is an asset.
+    public func asset(_ name: String, index: Int = 0) -> String? {
+        guard let ids = assets[name], index < ids.count else { return nil }
+        return ids[index]
+    }
 
     public func param(_ name: String) -> JSONValue? { params[name] ?? modelParams[name] }
 

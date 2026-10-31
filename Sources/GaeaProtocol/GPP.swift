@@ -7,6 +7,9 @@ public enum GPP {
     public static let version = 1
     /// The longest line either side may send, newline excluded.
     public static let maxLineBytes = 1 << 20
+    /// How a streamed chunk's samples are laid out in its file (GPP-1 §3.3): little-endian 32-bit float,
+    /// interleaved, at the chunk's `sample_rate` and `channels`.
+    public static let pcmF32 = "pcm_f32le"
     /// The one Developer ID team v1 trusts (G-22, AB-D-0184). A bundle signed by any other team is
     /// refused, and so is a manifest naming one. A trust list the operator approves ships in G4.
     public static let trustedTeam = "CFZS6RXUCP"
@@ -28,7 +31,7 @@ public enum GPP {
         "unload": .hostToWorker, "unloaded": .workerToHost, "shutdown": .hostToWorker,
         "memory.query": .hostToWorker, "memory": .workerToHost, "storage.get": .workerToHost,
         "storage.put": .workerToHost, "storage.delete": .workerToHost, "storage.query": .workerToHost,
-        "storage.result": .hostToWorker,
+        "storage.result": .hostToWorker, "asset_removed": .hostToWorker,
     ]
 
     /// The fields each host-to-worker message may carry (the schema is closed: anything else is
@@ -38,11 +41,12 @@ public enum GPP {
         "materialize": (["type", "id", "model", "lane"], []),
         "prepare": (["type", "id", "model", "lane"], []),
         "run": (["type", "id", "job", "operation", "model", "lane", "inputs", "params", "output_dir"],
-                ["model_params", "adapters", "seed"]),
+                ["model_params", "adapters", "seed", "streams", "assets"]),
         "cancel": (["type", "id", "job"], []),
         "unload": (["type", "id", "model"], ["lane"]),
         "shutdown": (["type", "id"], []),
         "memory.query": (["type", "id"], []),
+        "asset_removed": (["type", "id", "asset"], []),
         "storage.result": (["type", "re"], ["found", "value", "items", "more"]),
         "error": (["type", "code", "message", "retryable"], ["re", "job", "detail"]),
     ]

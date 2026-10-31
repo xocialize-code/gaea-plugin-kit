@@ -150,6 +150,11 @@ public actor GPPWorker {
         case "cancel": cancel(job: message["job"]?.stringValue ?? "")
         case "unload": await unload(message, id: requestID!)
         case "memory.query": await sendMemory(re: requestID)
+        case "asset_removed":
+            // Nothing answers it (GPP-1 §3.3); the plugin drops what it cached under the asset, if anything.
+            if let asset = message["asset"]?.stringValue, let hook = definition.onAssetRemoved {
+                Task { await hook(asset) }
+            }
         default: protocolError("Line \(lineNumber) of stdin: \(type) is not handled; ignored.")
         }
     }
@@ -468,10 +473,25 @@ public actor GPPWorker {
                         try await engine.run(request, package: package)
                     }
                 }
-                let session = EngineSession(outputDir: job.outputDir, send: { try await relay(packageID, $0) },
+                let streamTTS: @Sendable (TTSRequest, @escaping @Sendable (TTSStreamChunk) -> Void) async throws -> TTSResponse = {
+                    request, onChunk in
+                    try Task.checkCancellation()
+                    let handle = engine.stream(request, package: packageID)
+                    return try await withTaskCancellationHandler {
+                        for try await chunk in handle.chunks { onChunk(chunk) }
+                        return try await handle.completion.value
+                    } onCancel: { handle.cancel() }
+                }
+                let session = EngineSession(outputDir: job.outputDir, streams: job.streams, send: { try await relay(packageID, $0) },
                                             sendTo: { other, request in
                     try await relay(try await self.composedPackage(other, forRun: job.requestID, modelsRoot: context.worker.modelsRoot),
                                     request)
+                }, streamTTS: { request, onChunk in
+                    try await RunProgress.$sink.withValue({ report in
+                        context.progress(report.phase.rawValue, step: report.step, of: report.totalSteps, fraction: nil, message: nil)
+                    }) { try await streamTTS(request, onChunk) }
+                }, emit: { output, samples, rate, channels, final in
+                    try context.emit(output, samples: samples, sampleRate: rate, channels: channels, final: final)
                 })
                 do {
                     return try await perform(job, session)
@@ -699,6 +719,25 @@ public actor GPPWorker {
             let ids = adapters.map(\.id)
             if Set(ids).count != ids.count { throw GPPError(.invalidRequest, "adapters names an adapter twice.") }
         }
+        var streams: [String] = []
+        if let v = m["streams"] {
+            guard let items = v.arrayValue?.compactMap(\.stringValue), items.count == v.arrayValue?.count,
+                  items.allSatisfy(GPP.isName) else {
+                throw GPPError(.invalidRequest, "streams is an array of output names.")
+            }
+            streams = items
+        }
+        var assets: [String: [String?]] = [:]
+        if let v = m["assets"] {
+            guard let object = v.objectValue else { throw GPPError(.invalidRequest, "assets is an object of input names.") }
+            for (name, ids) in object {
+                switch ids {
+                case .string(let id): assets[name] = [id]
+                case .array(let items): assets[name] = items.map(\.stringValue)
+                default: throw GPPError(.invalidRequest, "assets.\(name) is an asset id, or an array of ids and nulls.")
+                }
+            }
+        }
         var seed: UInt64?
         if let s = m["seed"] {
             guard let i = s.intValue, i >= 0 else { throw GPPError(.invalidRequest, "seed is a non-negative integer.") }
@@ -708,7 +747,7 @@ public actor GPPWorker {
                    model: m["model"]?.stringValue ?? "", lane: m["lane"]?.stringValue ?? "",
                    inputs: try inputsObject.mapValues(paths), params: params, modelParams: modelParams,
                    adapters: adapters, seed: seed,
-                   outputDir: URL(fileURLWithPath: outputDir, isDirectory: true))
+                   outputDir: URL(fileURLWithPath: outputDir, isDirectory: true), streams: streams, assets: assets)
     }
 
     /// Map an engine or package error onto a GPP error code (GPP-1 §3.5).

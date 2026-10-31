@@ -50,6 +50,21 @@ await GaeaPluginMain.run(plugin)
   runs NERVE under the words the text guard protects in a Nacre job.
 - Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
 
+### Audio: streams, voices and assets (0.7.0)
+
+For MES Audio 0.1 (media-engine-spec v0.7.0, GPP-1 §3.3.1, §3.3.2, §4.3):
+
+- **Streaming.** When the host asks for an output as a stream (`job.streams("audio")`), send its samples as they come
+  with `context.emit("audio", samples:, sampleRate:, final:)` (a custom model), or `session.emit(…)` in a `perform`
+  operation, and return `.streamed("audio")`. Samples are floats in [-1, 1] at the model's own rate. Gaea converts
+  them to the client's format. `session.stream(ttsRequest)` runs a `StreamEmitting` package (MLXEngine contract 1.25)
+  and sends each of its chunks as it arrives.
+- **Offers.** Put the MES offer's `supports` and `limits` in its `model` (`"supports": ["stream": true, "voices": 10,
+  "sample_rate": 24000, "channels": 1, "seed": false]`, `"limits": ["max_text_chars": 4000]`), and the preset voices
+  in `Offer(…, voices: [...])` as MES `Voice` objects.
+- **Assets.** `job.asset("voice_ref")` is the MES asset id behind an input. Key anything cached from an input by it,
+  and drop it in `onAssetRemoved`.
+
 ### Layer limits and supports (0.6.0)
 
 An `image.decompose` offer (MES Image §3.2) says how many layers its model returns and whether it makes a composite:

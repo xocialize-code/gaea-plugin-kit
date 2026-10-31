@@ -156,6 +156,8 @@ public final class RunContext: @unchecked Sendable {
     private let lock = NSLock()
     private(set) var lastStep: Int?
     private(set) var lastOf: Int?
+    private var streamIndex: [String: Int] = [:]
+    private var streamFinal: Set<String> = []
 
     init(worker: WorkerContext, job: Job, connection: GPPConnection) {
         self.worker = worker
@@ -185,6 +187,36 @@ public final class RunContext: @unchecked Sendable {
         var m: [String: JSONValue] = ["type": "chunk", "re": .string(job.requestID), "job": .string(job.job),
                                       "output": .string(output), "index": .int(Int64(index)),
                                       "path": .string(file.path), "media_type": .string(mediaType)]
+        if final { m["final"] = true }
+        connection.send(m)
+    }
+
+    /// Samples of an output the host asked to stream (`job.streams`, GPP-1 §3.3), sent as one `chunk`: written to a
+    /// `pcm_f32le` file under `output_dir` and named in the line, never carried in it. `samples` are floats in [-1, 1],
+    /// interleaved when `channels` is 2, at the model's own `sampleRate`; Gaea converts them to the client's format.
+    /// Chunks are numbered from 0 per output; mark the last one `final` (an empty final chunk is allowed).
+    public func emit(_ output: String, samples: [Float], sampleRate: Int, channels: Int = 1, final: Bool = false) throws {
+        guard job.streams.contains(output) else { throw GPPError(.internal, "The host didn't ask to stream \(output).") }
+        guard sampleRate > 0, (1...2).contains(channels), samples.count % channels == 0 else {
+            throw GPPError(.internal, "A chunk of \(output) has a bad layout: \(samples.count) samples, \(channels) channels at \(sampleRate) Hz.")
+        }
+        lock.lock()
+        if streamFinal.contains(output) {
+            lock.unlock()
+            throw GPPError(.internal, "\(output) already sent its final chunk.")
+        }
+        let index = streamIndex[output, default: 0]
+        streamIndex[output] = index + 1
+        if final { streamFinal.insert(output) }
+        lock.unlock()
+        let directory = job.outputDir.appending(path: "stream", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appending(path: "\(output)-\(index).f32")
+        try samples.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: file)
+        var m: [String: JSONValue] = ["type": "chunk", "re": .string(job.requestID), "job": .string(job.job),
+                                      "output": .string(output), "index": .int(Int64(index)), "path": .string(file.path),
+                                      "media_type": "audio/pcm", "encoding": .string(GPP.pcmF32),
+                                      "sample_rate": .int(Int64(sampleRate)), "channels": .int(Int64(channels))]
         if final { m["final"] = true }
         connection.send(m)
     }
