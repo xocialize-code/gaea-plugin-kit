@@ -28,6 +28,9 @@ public actor GPPWorker {
 
     /// Engine models: the lane registered under the model's id (one lane per model at a time).
     private var registeredLane: [String: String] = [:]
+    /// Engine models: the lane the engine prepared since it was registered and last unloaded. Its weights were on disk
+    /// then, so a run skips the package's own probe, which can't see every layout (LTX's granule tree, AB-T-0404).
+    private var preparedLane: [String: String] = [:]
     /// Custom models: the instance, its prepared lane, and the footprint charged for it.
     private var customs: [String: CustomState] = [:]
     private var run: ActiveRun?
@@ -246,6 +249,7 @@ public actor GPPWorker {
             throw Self.translate(error)
         }
         registeredLane[model.id] = lane.id
+        preparedLane[model.id] = nil
         return id
     }
 
@@ -359,6 +363,7 @@ public actor GPPWorker {
             defer { relay?.cancel() }
             do {
                 _ = try await engine.prepare(capability, package: packageID)
+                preparedLane[model.id] = lane.id
             } catch let error as PackageError {
                 guard case .weightsVolumeBelowFloor(let why) = error else { throw error }
                 var detail: [String: JSONValue] = [:]
@@ -422,6 +427,7 @@ public actor GPPWorker {
             case .engine:
                 if lane == nil || registeredLane[model.id] == lane?.id {
                     await engine?.evict(package: PackageID(model.id))
+                    preparedLane[model.id] = nil
                 }
             case .custom:
                 if var state = customs[model.id], lane == nil || state.preparedLane == lane?.id {
@@ -493,7 +499,7 @@ public actor GPPWorker {
             } catch let error as GPPError {
                 throw Refused(error: error)
             }
-            if let sourcing = lane.configuration as? WeightSourcing,
+            if preparedLane[model.id] != lane.id, let sourcing = lane.configuration as? WeightSourcing,
                let missing = sourcing.missingWeightSources(storeRoot: context.worker.modelsRoot).first {
                 throw Refused(error: GPPError(
                     .notMaterialized,
