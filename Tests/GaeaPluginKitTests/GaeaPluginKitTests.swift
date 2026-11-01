@@ -29,10 +29,16 @@ struct ManifestTests {
         #expect(GaeaPluginKitInfo.engineContract == "1.57.0")
     }
 
-    @Test func rejectsAnotherTeam() {
+    /// A plugin is signed by its author's team (Gaea holds a new team's release for the operator, AB-T-0411): any
+    /// Apple Team ID is accepted, and anything not shaped like one is refused.
+    @Test func takesTheAuthorsTeamAndRefusesANonTeamID() throws {
         var definition = demoDefinition()
         definition.team = "F84FKGN358"
-        #expect(throws: GPPError.self) { try definition.manifest() }
+        #expect(try definition.manifest().team == "F84FKGN358")
+        for bad in ["f84fkgn358", "F84FKGN35", "F84FKGN3588", "F84FKGN35-"] {
+            definition.team = bad
+            #expect(throws: GPPError.self) { try definition.manifest() }
+        }
     }
 
     @Test func rejectsAnEngineModelWithoutSurfaces() {

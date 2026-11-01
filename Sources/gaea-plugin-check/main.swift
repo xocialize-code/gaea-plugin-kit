@@ -21,7 +21,8 @@ import Security
 // adapter's images (--adapter-input) as its inputs by role.
 //
 // 1. checks the bundle's signature statically: strict, nested code, every architecture, against a
-//    Developer ID requirement pinned to GPP.trustedTeam, the one team v1 trusts (G-7, G-22);
+//    Developer ID requirement pinned to the manifest's team (the author's, which Gaea trusts once its operator
+//    approves it; --team <ID> also asserts which team that must be);
 // 2. launches the manifest's executable with Process.launchRequirement pinned to the same team, so the
 //    kernel enforces it at exec;
 // 3. checks hello against the manifest (plugin, models, engine, manifest_sha256);
@@ -50,9 +51,7 @@ func option(_ name: String) -> String? {
     args.removeSubrange(i...(i + 1))
     return value
 }
-// v1 trusts one team and nothing overrides it (G-22, AB-D-0184).
-let team = GPP.trustedTeam
-if args.contains("--team") { fail("--team is gone: Gaea v1 trusts only \(team) (G-22)") }
+let expectedTeam = option("--team")
 let operationArg = option("--operation")
 let modelArg = option("--model")
 let laneArg = option("--lane")
@@ -103,7 +102,10 @@ do { manifest = try JSONDecoder().decode(PluginManifest.self, from: manifestData
 }
 let digest = SHA256.hash(data: manifestData).map { String(format: "%02x", $0) }.joined()
 ok("manifest \(manifest.id) \(manifest.version), sha256 \(digest.prefix(12))…")
-guard manifest.team == team else { fail("manifest team \(manifest.team) is not the trusted team \(team)") }
+// The bundle is held to the team its manifest names, as Gaea holds it (the signature must match the manifest).
+let team = manifest.team
+guard GPP.isTeamID(team) else { fail("manifest team \(team) isn't an Apple Team ID") }
+if let expectedTeam, expectedTeam != team { fail("manifest team \(team) is not \(expectedTeam) (--team)") }
 
 // MARK: static signature check (install time)
 

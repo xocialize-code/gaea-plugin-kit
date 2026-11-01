@@ -13,8 +13,11 @@ Requires macOS 26 and mlx-engine-swift 0.72.0 or later (contract 1.57.0). Adapte
 | `GaeaProtocol` | MLX-free: JSON values, the manifest's types, GPP's vocabulary. The Gaea host links no MLX and can share it |
 | `gaea-plugin-check` | A tiny MLX-free host. It verifies a built bundle, launches it under `Process.launchRequirement`, and drives a GPP session |
 
-v1 trusts one Developer ID team, CFZS6RXUCP (`GPP.trustedTeam`, G-22). The manifest generator refuses any other team,
-and `gaea-plugin-check` has no override. An operator-approved trust list ships in G4.
+A plugin is signed with its author's own Developer ID, and its manifest names that team. Gaea trusts its own team
+(`GPP.trustedTeam`) always, and any other once the operator approves it: from Gaea 0.13.0 a release from a new team is
+held for that answer. `gaea-plugin-check` checks the bundle against the manifest's team, and `--team <ID>` asserts
+which team that must be. The guide for plugin authors is in
+[gaea-plugin-demo](https://github.com/xocialize-code/gaea-plugin-demo/blob/main/AUTHORING.md).
 
 ## A plugin
 
