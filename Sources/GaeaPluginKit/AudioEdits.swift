@@ -192,15 +192,78 @@ public enum AudioSeparations {
 
     /// The response's stems as the job's outputs, one WAV each named by its stem, in the order asked (§3.6). A stem the
     /// package didn't return is the model's error.
-    public static func outputs(_ response: AudioSeparationResponse, stems: [String], outputDir: URL) throws -> [Output] {
-        try stems.map { stem in
+    ///
+    /// Each stem is the mixture's length (§3.6). Given the `mixture`, a PCM WAV stem a model made a little short or long
+    /// (a model working in whole latent frames, as AuK's 20 ms ones) is padded with silence or cut to the mixture's length
+    /// at the stem's own rate. One off by more than `tolerance` seconds is the model's error, never fitted.
+    public static func outputs(_ response: AudioSeparationResponse, stems: [String], mixture: Data? = nil,
+                               tolerance: Double = 0.1, outputDir: URL) throws -> [Output] {
+        let mix = mixture.flatMap(PCMWave.init)
+        return try stems.map { stem in
             guard let audio = response.stems[Stem(rawValue: stem)] else {
                 throw GPPError(.modelError, "The model returned no \(stem) stem.")
             }
+            var data = audio.data
+            if let mix, let wave = PCMWave(data) {
+                let target = Int((mix.seconds * Double(wave.sampleRate)).rounded())
+                guard abs(wave.frames - target) <= Int(tolerance * Double(wave.sampleRate)) else {
+                    throw GPPError(.modelError, String(format: "The model's %@ stem is %.3f s, not the mixture's %.3f s.",
+                                                       stem, wave.seconds, mix.seconds))
+                }
+                data = wave.fitted(frames: target)
+            }
             let url = outputDir.appending(path: "\(stem).wav")
-            try audio.data.write(to: url)
+            try data.write(to: url)
             return .file(stem, url, mediaType: "audio/wav")
         }
+    }
+}
+
+/// A RIFF WAV of integer or float PCM, read only far enough to know its rate, frames and samples.
+struct PCMWave {
+    let data: Data
+    let sampleRate: Int, blockAlign: Int, bitsPerSample: Int
+    let fmtStart: Int, dataStart: Int, dataCount: Int
+
+    init?(_ data: Data) {
+        let d = Data(data)
+        func u32(_ i: Int) -> Int { Int(d[i]) | Int(d[i + 1]) << 8 | Int(d[i + 2]) << 16 | Int(d[i + 3]) << 24 }
+        func u16(_ i: Int) -> Int { Int(d[i]) | Int(d[i + 1]) << 8 }
+        guard d.count >= 12, d[0..<4] == Data("RIFF".utf8), d[8..<12] == Data("WAVE".utf8) else { return nil }
+        var i = 12, rate = 0, align = 0, bits = 0, fmt = -1
+        while i + 8 <= d.count {
+            let id = d[i..<i + 4], size = u32(i + 4), body = i + 8
+            if id == Data("fmt ".utf8), size >= 16, body + 16 <= d.count {
+                let format = u16(body)
+                guard format == 1 || format == 3 || format == 0xFFFE else { return nil }
+                rate = u32(body + 4); align = u16(body + 12); bits = u16(body + 14); fmt = i
+            } else if id == Data("data".utf8) {
+                guard fmt >= 0, rate > 0, align > 0 else { return nil }
+                self.data = d; sampleRate = rate; blockAlign = align; bitsPerSample = bits
+                fmtStart = fmt; dataStart = body; dataCount = min(size, d.count - body) / align * align
+                return
+            }
+            i = body + size + (size & 1)
+        }
+        return nil
+    }
+
+    var frames: Int { dataCount / blockAlign }
+    var seconds: Double { Double(frames) / Double(sampleRate) }
+
+    /// The same WAV with exactly `frames` frames: cut, or padded with silence (0x80 for 8-bit, zero otherwise).
+    func fitted(frames target: Int) -> Data {
+        guard target != frames else { return data }
+        let keep = min(target, frames) * blockAlign
+        var samples = data[dataStart..<dataStart + keep]
+        if target > frames { samples.append(Data(repeating: bitsPerSample == 8 ? 0x80 : 0, count: (target - frames) * blockAlign)) }
+        var out = Data(data[0..<dataStart - 8])
+        out.append(Data("data".utf8))
+        withUnsafeBytes(of: UInt32(samples.count).littleEndian) { out.append(contentsOf: $0) }
+        out.append(samples)
+        if samples.count & 1 == 1 { out.append(0) }
+        withUnsafeBytes(of: UInt32(out.count - 8).littleEndian) { out.replaceSubrange(4..<8, with: $0) }
+        return out
     }
 }
 

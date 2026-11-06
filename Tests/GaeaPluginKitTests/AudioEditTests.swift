@@ -91,4 +91,40 @@ struct AudioEditTests {
         #expect(try Data(contentsOf: dir.appending(path: "speaker.wav")) == Data([8]))
         #expect(throws: GPPError.self) { try AudioSeparations.outputs(response, stems: ["voices"], outputDir: dir) }
     }
+
+    /// A 16-bit mono WAV of `frames` frames at `rate`, every sample `value`.
+    func wav(frames: Int, rate: Int, value: Int16 = 1000) -> Data {
+        var d = Data("RIFF".utf8)
+        func u32(_ v: Int) { withUnsafeBytes(of: UInt32(v).littleEndian) { d.append(contentsOf: $0) } }
+        func u16(_ v: Int) { withUnsafeBytes(of: UInt16(v).littleEndian) { d.append(contentsOf: $0) } }
+        u32(36 + frames * 2); d.append(Data("WAVEfmt ".utf8)); u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16)
+        d.append(Data("data".utf8)); u32(frames * 2)
+        for _ in 0..<frames { withUnsafeBytes(of: value.littleEndian) { d.append(contentsOf: $0) } }
+        return d
+    }
+
+    /// AuK's 20 ms frames: a 5.553375 s mixture separated into 5.54 s stems (AB-T-0455). Each stem is fitted to the
+    /// mixture's length at its own rate; one far off is the model's error.
+    @Test func stemsAreTheMixturesLength() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "kit-fit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let mixture = wav(frames: 133_281, rate: 24000)
+        func stem(_ frames: Int, rate: Int = 24000) -> Audio { Audio(format: .wav, data: wav(frames: frames, rate: rate), sampleRate: rate, channels: 1) }
+        let response = AudioSeparationResponse(stems: ["speaker": stem(132_960), "singing": stem(133_300), "voices": stem(266_562, rate: 48000)])
+        _ = try AudioSeparations.outputs(response, stems: ["speaker", "singing", "voices"], mixture: mixture, outputDir: dir)
+        for (name, frames) in [("speaker", 133_281), ("singing", 133_281), ("voices", 266_562)] {
+            let out = try #require(PCMWave(Data(contentsOf: dir.appending(path: "\(name).wav"))))
+            #expect(out.frames == frames, "\(name)")
+        }
+        let speaker = try #require(PCMWave(Data(contentsOf: dir.appending(path: "speaker.wav"))))
+        let samples = speaker.data[speaker.dataStart...]
+        #expect(samples.prefix(2) == Data([0xE8, 0x03]) && samples.suffix(2) == Data([0, 0]))  // kept, then silence
+        #expect(speaker.data.count == 44 + 133_281 * 2)
+        let short = AudioSeparationResponse(stems: ["speaker": stem(96_000)])
+        #expect(throws: GPPError.self) { try AudioSeparations.outputs(short, stems: ["speaker"], mixture: mixture, outputDir: dir) }
+        // Without the mixture a stem is written as it came.
+        _ = try AudioSeparations.outputs(short, stems: ["speaker"], outputDir: dir)
+        #expect(PCMWave(try Data(contentsOf: dir.appending(path: "speaker.wav")))?.frames == 96_000)
+    }
 }
