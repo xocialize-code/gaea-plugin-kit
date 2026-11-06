@@ -20,7 +20,7 @@ let package = Package(
         .executable(name: "gaea-plugin-check", targets: ["gaea-plugin-check"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/xocialize/mlx-engine-swift.git", from: "0.72.0"),
+        .package(url: "https://github.com/xocialize/mlx-engine-swift.git", from: "0.74.1"), // speechEdit 1.59.0 and the mlx-swift leak fix (AB-D-0208)
     ],
     targets: [
         .target(
