@@ -102,8 +102,10 @@ func demoDefinition(onConfigure: (@Sendable (WorkerContext, Bool) async throws -
 /// as present once the fake materializer has written its marker.
 struct FakeZImageConfiguration: PackageConfiguration, QuantConfigured, WeightSourcing {
     var quant: Quant
+    /// The snapshot's repo: another one stands in for a second model (a companion's weights).
+    var repo = "mlx-community/Z-Image-Turbo-bf16"
     var weightSources: [WeightSource] {
-        [WeightSource(role: "snapshot", repo: "mlx-community/Z-Image-Turbo-bf16", revision: "main",
+        [WeightSource(role: "snapshot", repo: repo, revision: "main",
                       matching: ["transformer/*", "text_encoder/*", "vae/*", "tokenizer/*", "scheduler/*", "*.json"])]
     }
 

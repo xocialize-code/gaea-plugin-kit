@@ -53,6 +53,20 @@ await GaeaPluginMain.run(plugin)
   runs NERVE under the words the text guard protects in a Nacre job.
 - Leave a lane configuration's models root unset. The engine fills it from the root Gaea sends in `configure`.
 
+### Meshes and companion models (0.12.0)
+
+For Gaea's Mesh profile (MES Mesh 0.1, GPP-1 §3.3.4):
+
+- **Meshes out.** Write a GLB (`.file("mesh", url, mediaType: "model/gltf-binary")`), +Y up, at the model's own scale.
+  Gaea places and scales it, writes the disclosure and licences into it, and renders the `preview` itself.
+  `params.background` says what to do with the image: `alpha` (already cut out), `remove` or `keep`.
+- **Companion models.** A model that composes with another engine model of the plugin in its runs
+  (`session.run(request, model: "birefnet")`, a matting step before image → 3D) declares it:
+  `.engine(…).composing(["birefnet"])`. Preparing the model downloads and loads the companion first, at its default
+  lane, reporting its download as the lane's; and the manifest lists the companion's weights on each of the model's
+  lanes, so Gaea's first-use notices and `gaea plugins warm` cover everything a run reads. The companion's memory is the
+  model's to declare in its footprint.
+
 ### Audio: streams, voices and assets (0.7.0)
 
 For MES Audio 0.1 (media-engine-spec v0.7.0, GPP-1 §3.3.1, §3.3.2, §4.3):

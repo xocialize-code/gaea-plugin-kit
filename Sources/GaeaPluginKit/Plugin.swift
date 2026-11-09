@@ -104,6 +104,11 @@ public struct ModelDefinition: Sendable {
     /// Adapters the plugin ships for this model (`shipping(_:)`): offered on every offer whose surface admits them,
     /// and registered with the engine as the registry declares them when a run names one.
     public var adapters: [ShippedAdapter] = []
+    /// Other engine models of the plugin this one composes with in its runs (`EngineSession.run(_:model:)`), at their
+    /// default lanes: a matting step before an image→3D model. Preparing this model downloads and loads them first, and
+    /// the manifest lists their weights on each of this model's lanes, so the host's first-use checks and `warm` see
+    /// everything a run reads. Their memory is this model's to declare.
+    public var companions: [String] = []
 
     /// An MLXEngine package type, and the operations it serves.
     public static func engine<P: ModelPackage & SendableMetatype>(
@@ -131,6 +136,13 @@ public struct ModelDefinition: Sendable {
     public func shipping(_ adapters: [ShippedAdapter]) -> ModelDefinition {
         var model = self
         model.adapters += adapters
+        return model
+    }
+
+    /// This model, composing with `ids` (`companions`).
+    public func composing(_ ids: [String]) -> ModelDefinition {
+        var model = self
+        model.companions += ids.filter { !model.companions.contains($0) }
         return model
     }
 

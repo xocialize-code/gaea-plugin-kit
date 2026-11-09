@@ -300,13 +300,22 @@ public actor GPPWorker {
             guard case .engine = model.backing, let engine else {
                 throw GPPError(.invalidRequest, "\(model.id) is not an engine model; send prepare.")
             }
+            var bytes: UInt64 = 0
+            for companionID in model.companions {
+                guard let companion = definition.model(companionID), let companionLane = companion.defaultLane else { continue }
+                let package = try await ensureRegistered(companion, companionLane)
+                let total = await engine.materializationPreview(try capability(companion, companionLane), package: package)?.totalBytes
+                let progress = ProgressThrottle(connection: connection, re: id, model: model.id, lane: lane.id, total: total)
+                let report = try await engine.materialize(package: package) { fraction, _ in progress.report(fraction) }
+                if !report.downloaded.isEmpty { bytes += total ?? 0 }
+            }
             let packageID = try await ensureRegistered(model, lane)
             let total = await engine.materializationPreview(try capability(model, lane), package: packageID)?.totalBytes
             let progress = ProgressThrottle(connection: connection, re: id, model: model.id, lane: lane.id, total: total)
             let report = try await engine.materialize(package: packageID) { fraction, _ in
                 progress.report(fraction)
             }
-            let bytes = report.downloaded.isEmpty ? 0 : (total ?? 0)
+            if !report.downloaded.isEmpty { bytes += total ?? 0 }
             connection.send(["type": "materialize.done", "re": .string(id), "model": .string(model.id),
                              "lane": .string(lane.id), "bytes": .int(Int64(clamping: bytes)),
                              "seconds": .double(seconds(since: began))])
@@ -345,6 +354,27 @@ public actor GPPWorker {
         guard let engine, let context else { throw GPPError(.internal, "not configured") }
         switch model.backing {
         case .engine:
+            // Companions first (`ModelDefinition.companions`): downloaded and loaded at their default lanes, their
+            // download reported as this lane's.
+            for id in model.companions {
+                guard let companion = definition.model(id), let companionLane = companion.defaultLane else { continue }
+                let companionID = try await ensureRegistered(companion, companionLane)
+                let companionCapability = try capability(companion, companionLane)
+                var relay: Task<Void, Never>?
+                if let re, await engine.needsDownload(companionCapability, package: companionID) {
+                    let total = await engine.materializationPreview(companionCapability, package: companionID)?.totalBytes
+                    let progress = ProgressThrottle(connection: connection, re: re, model: model.id, lane: lane.id, total: total)
+                    let events = engine.preparation.events()
+                    relay = Task {
+                        for await event in events where event.packageID == companionID.description {
+                            if case .downloading(let fraction, _) = event.phase { progress.report(fraction) }
+                        }
+                    }
+                }
+                defer { relay?.cancel() }
+                _ = try await engine.prepare(companionCapability, package: companionID)
+                preparedLane[companion.id] = companionLane.id
+            }
             let packageID = try await ensureRegistered(model, lane)
             let capability = try capability(model, lane)
             var relay: Task<Void, Never>?

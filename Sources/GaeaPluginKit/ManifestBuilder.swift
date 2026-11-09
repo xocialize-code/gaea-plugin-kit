@@ -5,7 +5,7 @@ import MLXToolKit
 /// The versions this kit build writes into hello and the manifest.
 public enum GaeaPluginKitInfo {
     /// This kit's version (`hello.kit.version`).
-    public static let version = "0.11.1"
+    public static let version = "0.12.0"
     /// The mlx-engine-swift release the kit is built and tested against. SwiftPM may resolve a later
     /// 0.x patch; the contract below is read from the linked MLXToolKit itself.
     public static let engineVersion = "0.74.1"
@@ -32,11 +32,32 @@ extension GaeaPluginDefinition {
                 PluginManifest.Model(id: model.id, title: model.title, package: model.manifest,
                                      lanes: model.lanes.map {
                                          PluginManifest.Lane(id: $0.id, default: $0.isDefault,
-                                                             resolved: model.resolved($0))
+                                                             resolved: manifestLane(model, $0))
                                      })
             },
             offers: offers.map { offer in model(offer.modelID ?? "").map(offer.withAdapters(of:)) ?? offer },
             helpers: helpers, settings: settings, storage: storage)
+    }
+
+    /// A lane as the manifest records it: its resolution, with its model's companions' weights (at their default lanes)
+    /// added to what it downloads, so the host sees everything a run reads.
+    func manifestLane(_ model: ModelDefinition, _ lane: LaneDefinition) -> ResolvedLane {
+        let own = model.resolved(lane)
+        let extra = model.companions.compactMap { self.model($0) }.flatMap { companion in
+            companion.defaultLane.map { companion.resolved($0).weightSources } ?? []
+        }
+        guard own.materialization == .engine, !extra.isEmpty else { return own }
+        var sources = own.weightSources
+        for source in extra where !sources.contains(where: { $0.repo == source.repo }) { sources.append(source) }
+        return ResolvedLane(
+            contractVersion: own.contractVersion, quant: own.quant, footprintQuant: own.footprintQuant,
+            persistentBytes: own.persistentBytes, persistentSource: own.persistentSource,
+            peakTransientBytes: own.peakTransientBytes, peakTransientSource: own.peakTransientSource,
+            activationScaling: own.activationScaling,
+            expectedWeightReadBytesPerRun: own.expectedWeightReadBytesPerRun,
+            minSustainedReadBytesPerSecond: own.minSustainedReadBytesPerSecond,
+            materialization: own.materialization, weightSources: sources, selfMaterializing: own.selfMaterializing,
+            capabilities: own.capabilities)
     }
 
     /// The rules a definition can break before the validator ever sees it.
@@ -46,6 +67,12 @@ extension GaeaPluginDefinition {
             problems.append("team \(team) isn't an Apple Team ID (ten capital letters or digits): use the one on your Developer ID certificate")
         }
         for model in models {
+            for id in model.companions {
+                guard let companion = self.model(id), case .engine = companion.backing, id != model.id else {
+                    problems.append("model \(model.id) composes with \(id), which isn't another engine model of this plugin")
+                    continue
+                }
+            }
             if model.lanes.filter(\.isDefault).count != 1 {
                 problems.append("model \(model.id) needs exactly one default lane")
             }
