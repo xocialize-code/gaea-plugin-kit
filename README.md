@@ -67,6 +67,28 @@ For Gaea's Mesh profile (MES Mesh 0.1, GPP-1 §3.3.4):
   lanes, so Gaea's first-use notices and `gaea plugins warm` cover everything a run reads. The companion's memory is the
   model's to declare in its footprint.
 
+### A part made to fit a body (0.13.0)
+
+For `mesh.generate_part` (GPP-1 §3.3.4; Gaea AB-T-0482), on mlx-engine-swift 0.78.0's `characterPart` capability
+(contract 1.63.0):
+
+```swift
+EngineOperation("mesh.generate_part", perform: { job, session in
+    let mapped = try CharacterParts.request(job)            // image, subject_box → pixels, body, part, physics, texture
+    guard let response = try await session.run(mapped.request) as? CharacterPartResponse else {
+        throw GPPError(.modelError, "The model returned no part.")
+    }
+    return RunResult(outputs: try CharacterParts.outputs(response, outputDir: job.outputDir), effective: mapped.effective)
+})
+```
+
+- `subject_box` `{x, y, width, height}` (shares of the upright image Gaea sends) becomes `subjectBox` `[x0, y0, x1, y1]`
+  in that file's pixels, edges rounded outwards and kept inside it. `body` becomes a `Mesh`, `physics` `springBones`,
+  `texture` (`atlas` or `none`) `colors`, `part` the part's tag.
+- `CharacterParts.isCutOut(job.params)` says whether the picture is already cut out (`background: alpha`); otherwise
+  matte it with a companion model (above), as an image → 3D model does.
+- Write the item as the model made it. Gaea stamps and previews it and never moves or rescales it.
+
 ### Audio: streams, voices and assets (0.7.0)
 
 For MES Audio 0.1 (media-engine-spec v0.7.0, GPP-1 §3.3.1, §3.3.2, §4.3):

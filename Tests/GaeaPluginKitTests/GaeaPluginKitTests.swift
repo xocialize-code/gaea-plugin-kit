@@ -25,8 +25,8 @@ struct ManifestTests {
         var definition = demoDefinition()
         definition.declaresEngine = true
         let manifest = try definition.manifest()
-        #expect(manifest.engine == PluginManifest.EngineRef(version: "0.74.1", contract: "1.59.0"))
-        #expect(GaeaPluginKitInfo.engineContract == "1.59.0")
+        #expect(manifest.engine == PluginManifest.EngineRef(version: "0.78.0", contract: "1.63.0"))
+        #expect(GaeaPluginKitInfo.engineContract == "1.63.0")
     }
 
     /// A plugin is signed by its author's team (Gaea holds a new team's release for the operator, AB-T-0411): any
