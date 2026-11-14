@@ -10,14 +10,14 @@ import Testing
 struct CompanionTests {
     static let matteRepo = "mlx-community/Fake-Matte"
 
-    static func definition(companions: [String] = ["fake-matte"]) -> GaeaPluginDefinition {
+    static func definition(companions: [String] = ["fake-matte"], charged: Bool = false) -> GaeaPluginDefinition {
         let matte = ModelDefinition.engine(FakeZImagePackage.self, id: "fake-matte", title: "Matte",
                                            lanes: [LaneDefinition(id: "bf16", default: true,
                                                                   configuration: FakeZImageConfiguration(quant: .bf16, repo: matteRepo))],
                                            operations: [])
         let main = ModelDefinition.engine(FakeZImagePackage.self, id: "z-image-turbo", title: "Z-Image Turbo",
                                           lanes: [LaneDefinition(id: "int4", default: true, configuration: FakeZImageConfiguration(quant: .int4))],
-                                          operations: [zImageGenerate]).composing(companions)
+                                          operations: [zImageGenerate]).composing(companions, charged: charged)
         return GaeaPluginDefinition(
             id: "com.xocialize.gaea.companion-test", version: "0.1.0", team: "CFZS6RXUCP",
             repo: "https://github.com/xocialize-code/gaea-plugin-companion-test", title: "Companion test",
@@ -34,6 +34,34 @@ struct CompanionTests {
         #expect(main.lanes[0].resolved.weightSources.map(\.repo) == ["mlx-community/Z-Image-Turbo-bf16", Self.matteRepo])
         let matte = try #require(manifest.models.first { $0.id == "fake-matte" })
         #expect(matte.lanes[0].resolved.weightSources.map(\.repo) == [Self.matteRepo])
+    }
+
+    /// Uncharged (the default), a lane's memory is the model's own figures: they were measured with the companion in.
+    @Test func anUnchargedCompanionLeavesTheLanesMemoryAlone() throws {
+        let definition = Self.definition()
+        let main = try #require(definition.model("z-image-turbo"))
+        let own = main.resolved(try #require(main.defaultLane))
+        let lane = try #require(try definition.manifest().models.first { $0.id == "z-image-turbo" }).lanes[0].resolved
+        #expect(lane.persistentBytes == own.persistentBytes)
+        #expect(lane.peakTransientBytes == own.peakTransientBytes)
+    }
+
+    /// Charged (0.13.1), the lane holds both: persistent bytes summed, the peak transient the larger of the two; the
+    /// companion's own entry is unchanged.
+    @Test func aChargedCompanionsMemoryIsAddedToTheLane() throws {
+        let definition = Self.definition(charged: true)
+        let main = try #require(definition.model("z-image-turbo"))
+        let matte = try #require(definition.model("fake-matte"))
+        let own = main.resolved(try #require(main.defaultLane))
+        let companion = matte.resolved(try #require(matte.defaultLane))
+        #expect(companion.persistentBytes > 0)
+        let manifest = try definition.manifest()
+        let lane = try #require(manifest.models.first { $0.id == "z-image-turbo" }).lanes[0].resolved
+        #expect(lane.persistentBytes == own.persistentBytes + companion.persistentBytes)
+        #expect(lane.peakTransientBytes == max(own.peakTransientBytes, companion.peakTransientBytes))
+        #expect(lane.weightSources.map(\.repo) == ["mlx-community/Z-Image-Turbo-bf16", Self.matteRepo])
+        let matteLane = try #require(manifest.models.first { $0.id == "fake-matte" }).lanes[0].resolved
+        #expect(matteLane.persistentBytes == companion.persistentBytes)
     }
 
     @Test func anUnknownCompanionIsRefused() {

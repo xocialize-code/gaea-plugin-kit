@@ -64,8 +64,13 @@ For Gaea's Mesh profile (MES Mesh 0.1, GPP-1 §3.3.4):
   (`session.run(request, model: "birefnet")`, a matting step before image → 3D) declares it:
   `.engine(…).composing(["birefnet"])`. Preparing the model downloads and loads the companion first, at its default
   lane, reporting its download as the lane's; and the manifest lists the companion's weights on each of the model's
-  lanes, so Gaea's first-use notices and `gaea plugins warm` cover everything a run reads. The companion's memory is the
-  model's to declare in its footprint.
+  lanes, so Gaea's first-use notices and `gaea plugins warm` cover everything a run reads.
+- **A companion's memory (0.13.1).** Gaea plans by a lane's figures, so they must hold the companion too. Where the
+  model's own footprints were measured with the companion loaded (TRELLIS.2's tiers), leave it as above. Where they
+  were measured without it, say so: `.composing(["birefnet"], charged: true)` adds the companion's default lane to
+  every lane of the model in the manifest, its persistent bytes summed and its peak transient taken as the larger of
+  the two, since a companion runs before the model and never beside it. HairDeck's lane (2.9 + 2.6 GB) with BiRefNet
+  (0.9 + 7.2 GB) then declares 3.8 + 7.2 GB.
 
 ### A part made to fit a body (0.13.0)
 

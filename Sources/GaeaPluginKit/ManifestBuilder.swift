@@ -5,7 +5,7 @@ import MLXToolKit
 /// The versions this kit build writes into hello and the manifest.
 public enum GaeaPluginKitInfo {
     /// This kit's version (`hello.kit.version`).
-    public static let version = "0.13.0"
+    public static let version = "0.13.1"
     /// The mlx-engine-swift release the kit is built and tested against. SwiftPM may resolve a later
     /// 0.x patch; the contract below is read from the linked MLXToolKit itself.
     public static let engineVersion = "0.78.0"
@@ -40,19 +40,25 @@ extension GaeaPluginDefinition {
     }
 
     /// A lane as the manifest records it: its resolution, with its model's companions' weights (at their default lanes)
-    /// added to what it downloads, so the host sees everything a run reads.
+    /// added to what it downloads, so the host sees everything a run reads; and, for the companions the model charges
+    /// (`ModelDefinition.composing(_:charged:)`), their memory added to what it holds: persistent bytes summed, the
+    /// peak transient the largest of them, since a companion runs before the model and never beside it.
     func manifestLane(_ model: ModelDefinition, _ lane: LaneDefinition) -> ResolvedLane {
         let own = model.resolved(lane)
-        let extra = model.companions.compactMap { self.model($0) }.flatMap { companion in
-            companion.defaultLane.map { companion.resolved($0).weightSources } ?? []
+        let companions: [(id: String, lane: ResolvedLane)] = model.companions.compactMap { id in
+            self.model(id).flatMap { companion in companion.defaultLane.map { (id, companion.resolved($0)) } }
         }
-        guard own.materialization == .engine, !extra.isEmpty else { return own }
+        let extra = companions.flatMap(\.lane.weightSources)
+        let charged = companions.filter { model.chargedCompanions.contains($0.id) }.map(\.lane)
+        guard own.materialization == .engine, !(extra.isEmpty && charged.isEmpty) else { return own }
         var sources = own.weightSources
         for source in extra where !sources.contains(where: { $0.repo == source.repo }) { sources.append(source) }
         return ResolvedLane(
             contractVersion: own.contractVersion, quant: own.quant, footprintQuant: own.footprintQuant,
-            persistentBytes: own.persistentBytes, persistentSource: own.persistentSource,
-            peakTransientBytes: own.peakTransientBytes, peakTransientSource: own.peakTransientSource,
+            persistentBytes: charged.reduce(own.persistentBytes) { $0 + $1.persistentBytes },
+            persistentSource: own.persistentSource,
+            peakTransientBytes: charged.reduce(own.peakTransientBytes) { max($0, $1.peakTransientBytes) },
+            peakTransientSource: own.peakTransientSource,
             activationScaling: own.activationScaling,
             expectedWeightReadBytesPerRun: own.expectedWeightReadBytesPerRun,
             minSustainedReadBytesPerSecond: own.minSustainedReadBytesPerSecond,

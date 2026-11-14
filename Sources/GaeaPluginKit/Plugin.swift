@@ -107,8 +107,12 @@ public struct ModelDefinition: Sendable {
     /// Other engine models of the plugin this one composes with in its runs (`EngineSession.run(_:model:)`), at their
     /// default lanes: a matting step before an image→3D model. Preparing this model downloads and loads them first, and
     /// the manifest lists their weights on each of this model's lanes, so the host's first-use checks and `warm` see
-    /// everything a run reads. Their memory is this model's to declare.
+    /// everything a run reads. Their memory is this model's to declare, in its own footprints or through
+    /// `chargedCompanions`.
     public var companions: [String] = []
+    /// The companions whose memory the manifest adds to each of this model's lanes (`composing(_:charged:)`, 0.13.1):
+    /// for a model whose own footprints were measured without them.
+    public var chargedCompanions: Set<String> = []
 
     /// An MLXEngine package type, and the operations it serves.
     public static func engine<P: ModelPackage & SendableMetatype>(
@@ -140,9 +144,16 @@ public struct ModelDefinition: Sendable {
     }
 
     /// This model, composing with `ids` (`companions`).
-    public func composing(_ ids: [String]) -> ModelDefinition {
+    ///
+    /// `charged` says whose figures hold the companions' memory. Leave it false when the model's own footprints were
+    /// measured with its companions loaded (TRELLIS.2's tiers include BiRefNet). Pass true when they were measured
+    /// without them (HairDeck's lane is HairDeck alone): the manifest then adds each companion's default lane to every
+    /// lane of this model, its persistent bytes summed and its peak transient taken as the larger of the two, since a
+    /// companion runs before the model and never beside it.
+    public func composing(_ ids: [String], charged: Bool = false) -> ModelDefinition {
         var model = self
         model.companions += ids.filter { !model.companions.contains($0) }
+        if charged { model.chargedCompanions.formUnion(ids) } else { model.chargedCompanions.subtract(ids) }
         return model
     }
 
